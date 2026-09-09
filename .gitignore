@@ -2,9 +2,11 @@
 __pycache__/
 *.pyc
 *.egg-info/
-models/**/*.onnx
-models/**/*.bin
-models/**/*.gguf
+# Everything under models/ is fetched by scripts/fetch_models.py and is not source.
+# Weights, tokenisers and configs alike - if it can be re-downloaded, it does not
+# belong in the history.
+models/*
+!models/.gitkeep
 .setu_cache/
 setu.db
 bench_results/
