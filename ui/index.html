@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>SETU — offline consultation companion</title>
+<title>SETU — offline comprehension engine</title>
 <style>
   :root {
     --bg: #f4f6f8;
@@ -109,13 +109,13 @@
     margin: 0 0 6px; font-size: 11px; font-weight: 700;
     letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
   }
-  .grp.redflag h3 { color: var(--danger); }
+  .grp.redflag h3, .grp.deadline h3, .grp.exam h3 { color: var(--danger); }
   .item {
     display: flex; gap: 8px; align-items: flex-start;
     padding: 8px 10px; border-radius: 7px; background: var(--bg);
     font-size: 13.5px; margin-bottom: 5px;
   }
-  .grp.redflag .item { background: var(--danger-soft); }
+  .grp.redflag .item, .grp.deadline .item, .grp.exam .item { background: var(--danger-soft); }
   .item .tick { flex: none; font-size: 13px; line-height: 1.35; }
   .item.covered .tick { color: var(--accent); }
   .item.missed .tick { color: var(--danger); }
@@ -183,7 +183,8 @@
 <body>
 
 <header>
-  <div class="brand"><b>SETU</b> <span>offline consultation companion</span></div>
+  <div class="brand"><b>SETU</b> <span>offline comprehension engine</span></div>
+  <select id="domain" title="Which setting this session is in"></select>
   <span class="pill offline" id="netPill">on-device · no network</span>
   <div class="spacer"></div>
   <div class="metrics">
@@ -221,14 +222,14 @@
   <!-- ------------------------------------------------------------ panel --- -->
   <div class="col">
     <section class="card" style="flex:1.3">
-      <h2>Care plan <span class="count" id="cPlan">0</span></h2>
+      <h2><span id="planTitle">Care plan</span> <span class="count" id="cPlan">0</span></h2>
       <div class="body" id="plan">
         <p class="empty">Instructions the doctor gives will collect here.</p>
       </div>
     </section>
 
     <section class="card" style="flex:1">
-      <h2>Words the patient likely missed <span class="count" id="cGloss">0</span></h2>
+      <h2><span id="cardTitle">Words the patient likely missed</span> <span class="count" id="cGloss">0</span></h2>
       <div class="body" id="glossary">
         <p class="empty">Medical jargon is flagged as it is spoken.</p>
       </div>
@@ -281,19 +282,50 @@ const state = {
   plan: [],
   playing: false,
   cancel: false,
+  domains: {},   // key -> domain descriptor from /api/domains
+  domain: null,  // the active one
 };
 
 /* ------------------------------------------------------------------ startup */
 async function boot() {
-  const langs = await api("/api/languages");
+  const [langs, doms] = await Promise.all([
+    api("/api/languages"),
+    api("/api/domains"),
+  ]);
+
   $("lang").innerHTML = Object.entries(langs.languages)
     .map(([k, v]) => `<option value="${k}"${k === langs.default ? " selected" : ""}>${esc(v)}</option>`)
     .join("");
+
+  for (const d of doms.domains) state.domains[d.key] = d;
+  $("domain").innerHTML = doms.domains
+    .map((d) => `<option value="${d.key}"${d.key === doms.default ? " selected" : ""}>${esc(d.title)}</option>`)
+    .join("");
+  state.domain = state.domains[doms.default];
+
   await startVisit();
+  applyDomain();
   const sys = await api("/api/system");
   paintCompute(sys.router, sys.power);
   setInterval(tickDuration, 1000);
 }
+
+/* One engine, three settings. Everything the UI says about roles, categories and
+   headings comes from the server's domain descriptor rather than being hard-coded,
+   so adding a fourth setting needs no change here. */
+function applyDomain() {
+  const d = state.domain;
+  if (!d) return;
+  $("speaker").innerHTML =
+    `<option value="${esc(d.expert)}">${title(d.expert)}</option>` +
+    `<option value="${esc(d.learner)}">${title(d.learner)}</option>`;
+  $("cardTitle").textContent = `Words the ${d.learner} likely missed`;
+  $("planTitle").textContent = d.key === "clinic" ? "Care plan" : "What you must do";
+  $("say").placeholder = `Type what the ${d.expert} said, then press Enter`;
+}
+
+const title = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const initials = (speaker) => speaker.slice(0, 2).replace(/^./, (c) => c.toUpperCase());
 
 async function startVisit() {
   state.id = "visit-" + Date.now();
@@ -303,6 +335,7 @@ async function startVisit() {
   await post("/api/consult/start", {
     session_id: state.id,
     patient_language: $("lang").value,
+    domain: $("domain").value,
   });
 }
 
@@ -386,10 +419,11 @@ function renderTurn(result) {
       : `<div class="xlate">${esc(t.text)}</div>`;
   }
 
+  const isExpert = state.domain && turn.speaker === state.domain.expert;
   const el = document.createElement("div");
-  el.className = `turn ${turn.speaker}`;
+  el.className = `turn ${isExpert ? "doctor" : "patient"}`;
   el.innerHTML =
-    `<div class="who">${turn.speaker === "doctor" ? "Dr" : "Pt"}</div>` +
+    `<div class="who" title="${esc(title(turn.speaker))}">${esc(initials(turn.speaker))}</div>` +
     `<div class="bubble"><div class="src">${src}</div>${xlate}</div>`;
   box.appendChild(el);
   box.scrollTop = box.scrollHeight;
@@ -398,14 +432,10 @@ function renderTurn(result) {
 </script>
 <script>
 /* ---------------------------------------------------------------- care plan */
-const KIND_LABEL = {
-  redflag: "Come back immediately if",
-  medication: "Medicines",
-  followup: "Next visit",
-  test: "Tests",
-  lifestyle: "At home",
-};
-const KIND_ORDER = ["redflag", "medication", "followup", "test", "lifestyle"];
+/* Both of these now come from the server's domain descriptor. */
+const kindOrder = () => (state.domain ? state.domain.kinds : []);
+const kindLabel = (k) =>
+  (state.domain && state.domain.headings[k]) || k;
 
 async function refreshPlan() {
   const session = await api(`/api/consult/${state.id}`);
@@ -420,11 +450,11 @@ function renderPlan() {
     box.innerHTML = `<p class="empty">Instructions the doctor gives will collect here.</p>`;
     return;
   }
-  box.innerHTML = KIND_ORDER.map((kind) => {
+  box.innerHTML = kindOrder().map((kind) => {
     const items = state.plan.filter((p) => p.kind === kind);
     if (!items.length) return "";
     return (
-      `<div class="grp ${kind}"><h3>${KIND_LABEL[kind]}</h3>` +
+      `<div class="grp ${kind}"><h3>${esc(kindLabel(kind))}</h3>` +
       items
         .map((p) => {
           const cls = p.checked === undefined ? "unknown" : p.confirmed ? "covered" : "missed";
@@ -524,9 +554,13 @@ async function replayDemo() {
   $("btnStop").disabled = false;
 
   try {
-    const script = await api("/api/consult/demo/hypertension");
+    const scripts = (state.domain && state.domain.scripts) || [];
+    if (!scripts.length) throw new Error("no sample session for this setting");
+    const script = await api(`/api/consult/demo/${scripts[0].name}`);
+    $("btnDemo").textContent = "▶ " + scripts[0].title;
     $("lang").value = script.patient_language;
     await startVisit();
+    applyDomain();
     $("transcript").innerHTML = `<p class="empty">${esc(script.note)}</p>`;
     state.suggested = script.teachback;
 
@@ -551,10 +585,28 @@ $("btnTeach").onclick = () => runTeachback().catch((e) => alert(e.message));
 $("btnCard").onclick = () => showCard().catch((e) => alert(e.message));
 $("btnSay").onclick = submitTyped;
 $("say").addEventListener("keydown", (e) => { if (e.key === "Enter") submitTyped(); });
-$("lang").addEventListener("change", () => startVisit().then(() => {
-  $("transcript").innerHTML = `<p class="empty">New visit started.</p>`;
-  state.plan = []; state.glosses = {}; renderPlan(); renderGlossary();
-}));
+$("lang").addEventListener("change", resetSession);
+$("domain").addEventListener("change", () => {
+  state.domain = state.domains[$("domain").value];
+  resetSession();
+});
+
+function resetSession() {
+  startVisit()
+    .then(() => {
+      applyDomain();
+      $("transcript").innerHTML =
+        `<p class="empty">${esc(state.domain ? state.domain.blurb : "New session started.")}</p>`;
+      state.plan = [];
+      state.glosses = {};
+      state.suggested = "";
+      renderPlan();
+      renderGlossary();
+      $("teachback").innerHTML =
+        `<p class="empty">At the end, ask the ${esc(state.domain.learner)} to repeat it back.</p>`;
+    })
+    .catch((e) => alert(e.message));
+}
 
 function submitTyped() {
   const input = $("say");

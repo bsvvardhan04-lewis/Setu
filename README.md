@@ -3,7 +3,9 @@
 # SETU
 
 ### The doctor speaks English. The patient thinks in Hindi.
-### SETU makes sure they actually understood — offline, on the NPU.
+### SETU checks they actually understood — offline, on the NPU.
+
+**One engine, three settings: clinic, classroom, government counter.**
 
 *setu* (सेतु) — Sanskrit for **bridge**
 
@@ -49,6 +51,53 @@ The moment that matters is the fifth one:
 > ✗ *If you get chest pain or breathlessness, come immediately to the emergency.*
 
 The doctor learns this **while the patient is still in the room.**
+
+## Three settings, one engine
+
+The clinic is the flagship, not the limit. Strip the vocabulary away and every one of
+these is the same problem:
+
+> Two people. A language or knowledge gap. One side issues instructions.
+> The other is expected to act on them. **Nobody checks that the instructions landed.**
+
+So SETU ships one engine and three domain profiles
+([`domains.py`](src/setu/pipeline/domains.py)). Switch the mode in the header:
+
+| Setting | Expert → learner | What it catches | Ordered by |
+| --- | --- | --- | --- |
+| **Clinic** | doctor → patient | "od", "fasting", "lipid profile" | red flags first |
+| **Classroom** | teacher → student | "weightage", "internal", "plagiarism" | exam dates first |
+| **Counter** | officer → citizen | "self attested", "BPL", "acknowledgement" | deadline first |
+
+Each profile supplies a jargon lexicon, instruction categories ordered by consequence,
+teach-back questions, and card headings. **Adding a fourth setting — a courtroom, a bank,
+a panchayat — means writing one `Domain`, not another agent.** That is the whole argument
+for the abstraction, and `tests/test_domains.py` enforces it: if the clinic's vocabulary
+ever leaks into the classroom, the suite fails.
+
+The results speak for themselves. Same code, three sessions:
+
+- **Clinic** — patient repeated the tablet, missed *"chest pain means come immediately"*
+- **Classroom** — student repeated the reading, missed the **assignment deadline**, the
+  **internal test**, and the **plagiarism warning**
+- **Counter** — citizen repeated the ₹50 fee, missed the **last date** and the **documents**
+
+## Who owns the laptop
+
+**Not the patient.** The device belongs to the clinic, the school, or the office. The
+person being helped never touches it, installs nothing, and needs no phone — their
+interface is **a printed card**, which is exactly why the take-home output is printable
+text rather than an app screen.
+
+The economics work because one machine serves everyone who walks in. A clinic seeing ~40
+people a day over a three-year life is roughly 36,000 sessions; a ₹90,000 laptop across
+that is about **₹2.50 per session** (illustrative, but the order of magnitude holds).
+A Common Service Centre agent charges ₹30–100 to help with a single document.
+**The device was never the expensive part. The human intermediary is.**
+
+Realistic buyers today: private clinics in tier-2/3 cities, district hospitals, medical
+and engineering colleges, NGO and CSR health programmes, and telemedicine providers — all
+of whom already buy PCs, and all of whom face the language gap daily.
 
 ## Why this needs Snapdragon
 

@@ -224,6 +224,7 @@ def speak(request: SpeakRequest) -> dict:
 class ConsultStartRequest(BaseModel):
     session_id: str
     patient_language: str = "hi"
+    domain: str = "clinic"
 
 
 class ConsultTurnRequest(BaseModel):
@@ -237,16 +238,44 @@ class TeachbackRequest(BaseModel):
     restatement: str
 
 
+@app.get("/api/domains")
+def domains() -> dict:
+    """The settings SETU can run. Same engine, different vocabulary each time."""
+    from ..pipeline.domains import DEFAULT_DOMAIN, DOMAINS
+    from ..pipeline.demo_script import SCRIPTS
+
+    scripts_by_domain: dict[str, list[dict]] = {}
+    for name, script in SCRIPTS.items():
+        scripts_by_domain.setdefault(script.get("domain", "clinic"), []).append(
+            {"name": name, "title": script["title"]}
+        )
+
+    return {
+        "default": DEFAULT_DOMAIN,
+        "domains": [
+            {**d.as_dict(), "scripts": scripts_by_domain.get(key, [])}
+            for key, d in DOMAINS.items()
+        ],
+    }
+
+
 @app.post("/api/consult/start")
 def consult_start(request: ConsultStartRequest) -> dict:
-    session = consult_agent.start(request.session_id, request.patient_language)
+    session = consult_agent.start(
+        request.session_id, request.patient_language, request.domain
+    )
     return session.as_dict()
 
 
 @app.post("/api/consult/turn")
 def consult_turn(request: ConsultTurnRequest) -> dict:
-    if request.speaker not in ("doctor", "patient"):
-        raise HTTPException(400, "speaker must be 'doctor' or 'patient'")
+    try:
+        session = consult_agent.get(request.session_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    allowed = {"doctor", "patient", session.domain.expert, session.domain.learner}
+    if request.speaker not in allowed:
+        raise HTTPException(400, f"speaker must be one of {sorted(allowed)}")
     try:
         result = consult_agent.add_turn(request.session_id, request.speaker, request.text)
     except KeyError as exc:

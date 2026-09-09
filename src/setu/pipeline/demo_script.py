@@ -31,13 +31,60 @@ HYPERTENSION_VISIT: list[dict[str, str]] = [
 #: entire product demonstrated in one line.
 HYPERTENSION_TEACHBACK = "I will take the tablet at night and come back after two weeks."
 
+#: A first-year data structures lecture. Same failure modes, different uniform: an
+#: abbreviation the student will not decode ("weightage"), a deadline buried mid-sentence,
+#: and a student who says "yes sir" without having registered the submission date.
+CLASSROOM_LECTURE: list[dict[str, str]] = [
+    {"speaker": "teacher", "text": "Today we cover asymptotic analysis, so please note that this is important."},
+    {"speaker": "teacher", "text": "Submit the lab record assignment by Friday, that is the deadline."},
+    {"speaker": "student", "text": "Yes sir."},
+    {"speaker": "teacher", "text": "The internal test is next month and this topic has high weightage in the syllabus."},
+    {"speaker": "teacher", "text": "Remember that the key idea is how the algorithm behaves when n becomes very large."},
+    {"speaker": "teacher", "text": "Read chapter four in the textbook and bring your notes next class."},
+    {"speaker": "teacher", "text": "If you copy from each other that is plagiarism and you will lose all marks."},
+]
+CLASSROOM_TEACHBACK = "I have to read chapter four and bring my notes."
+
+#: A pension counter. The citizen cannot read the form and is about to miss a deadline.
+COUNTER_VISIT: list[dict[str, str]] = [
+    {"speaker": "citizen", "text": "Sahib, pension ka form bharna hai."},
+    {"speaker": "officer", "text": "The last date is 30 September, after that you cannot apply this year."},
+    {"speaker": "officer", "text": "Bring your Aadhaar, ration card and a self attested photocopy of the passbook."},
+    {"speaker": "citizen", "text": "Theek hai."},
+    {"speaker": "officer", "text": "There is a fee of 50 rupees, pay at counter number three."},
+    {"speaker": "officer", "text": "You are eligible only if the household income is below the BPL limit."},
+    {"speaker": "officer", "text": "After submitting, collect the acknowledgement receipt, do not leave without it."},
+]
+COUNTER_TEACHBACK = "I will pay fifty rupees at counter three."
+
+_NOTE = (
+    "Replayed from a script so the demo does not depend on room audio. "
+    "Every turn runs through the real pipeline."
+)
+
 SCRIPTS: dict[str, dict] = {
     "hypertension": {
         "title": "Hypertension follow-up, district OPD",
+        "domain": "clinic",
         "patient_language": "hi",
         "turns": HYPERTENSION_VISIT,
         "teachback": HYPERTENSION_TEACHBACK,
-        "note": "Replayed from a script so the demo does not depend on room audio. "
-        "Every turn runs through the real pipeline.",
-    }
+        "note": _NOTE,
+    },
+    "lecture": {
+        "title": "Data structures lecture, first year engineering",
+        "domain": "classroom",
+        "patient_language": "te",
+        "turns": CLASSROOM_LECTURE,
+        "teachback": CLASSROOM_TEACHBACK,
+        "note": _NOTE,
+    },
+    "pension": {
+        "title": "Pension counter, block office",
+        "domain": "counter",
+        "patient_language": "hi",
+        "turns": COUNTER_VISIT,
+        "teachback": COUNTER_TEACHBACK,
+        "note": _NOTE,
+    },
 }

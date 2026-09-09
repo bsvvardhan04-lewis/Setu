@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 
 from ..config import SUPPORTED_LANGUAGES
 from ..models import GenParams
+from .domains import CLINIC, DEFAULT_DOMAIN, DOMAINS, Domain, get_domain
 from .engine import Engine
 
 
@@ -62,58 +63,11 @@ class CarePlanItem:
         }
 
 
-#: Terms that routinely appear in an Indian OPD consultation and routinely are not
-#: understood. Gloss text is deliberately plain: this is read aloud to the patient.
-JARGON_LEXICON: dict[str, str] = {
-    "hypertension": "high blood pressure",
-    "hypotension": "low blood pressure",
-    "diabetes mellitus": "high blood sugar",
-    "hyperglycemia": "blood sugar that is too high",
-    "hypoglycemia": "blood sugar that is too low",
-    "anemia": "low haemoglobin, which makes you weak and tired",
-    "hb": "haemoglobin, the iron level in your blood",
-    "lipid profile": "a blood test for fat and cholesterol",
-    "fasting": "with nothing to eat or drink for 8 to 10 hours before",
-    "post prandial": "measured about two hours after eating",
-    "hba1c": "a blood test showing your average sugar over three months",
-    "antibiotic": "medicine that kills the infection",
-    "analgesic": "pain relief medicine",
-    "antipyretic": "medicine to bring the fever down",
-    "prophylaxis": "medicine taken to stop a problem before it starts",
-    "bd": "twice a day",
-    "tds": "three times a day",
-    "od": "once a day",
-    "sos": "only if needed",
-    "stat": "right now, immediately",
-    "npo": "nothing to eat or drink",
-    "chronic": "long lasting, needs ongoing care",
-    "acute": "sudden and serious",
-    "benign": "not cancer, not dangerous",
-    "malignant": "cancer",
-    "biopsy": "taking a small piece of tissue to test it",
-    "ecg": "a heart tracing test",
-    "usg": "an ultrasound scan",
-    "cbc": "a complete blood count test",
-    "renal": "related to the kidneys",
-    "hepatic": "related to the liver",
-    "cardiac": "related to the heart",
-    "edema": "swelling from fluid",
-    "dyspnea": "difficulty breathing",
-    "syncope": "fainting",
-    "titrate": "slowly adjust the dose",
-    "adherence": "taking the medicine exactly as told",
-    "follow up": "come back for a check",
-    "referral": "being sent to another doctor or hospital",
-}
-
-#: Cues that a doctor turn contains an instruction rather than conversation.
-_PLAN_PATTERNS: list[tuple[str, str]] = [
-    (r"\b(tablet|tab|capsule|cap|syrup|mg|ml|dose|twice|thrice|once a day|bd|tds|od|sos)\b", "medication"),
-    (r"\b(test|scan|x-?ray|ecg|usg|ultrasound|blood work|cbc|hba1c|lipid|biopsy|sample)\b", "test"),
-    (r"\b(come back|follow.?up|review|next week|after \d+ (day|week|month)|revisit)\b", "followup"),
-    (r"\b(if .*(worse|bleeding|chest pain|breathless|faint|vomit|fever above)|emergency|immediately)\b", "redflag"),
-    (r"\b(avoid|stop|reduce|walk|exercise|diet|salt|sugar|water|rest|smoking|alcohol)\b", "lifestyle"),
-]
+#: Kept as a module-level alias so existing imports keep working. The real lexicons
+#: now live per-domain in `domains.py`, because the clinic's vocabulary is not the
+#: classroom's and hard-coding one of them into the engine was the thing preventing
+#: SETU from serving more than a single setting.
+JARGON_LEXICON = CLINIC.jargon
 
 _GLOSS_PROMPT = """Explain this medical term to a patient with no medical training.
 Answer in ONE short sentence, under 15 words, in plain {language_name}.
@@ -149,28 +103,35 @@ PATIENT SAID:
 Assessment:"""
 
 
-def find_jargon(text: str) -> list[str]:
-    """Longest-match lexicon scan. Deterministic, instant, and it never hallucinates
-    a term that was not actually said."""
+def find_jargon(text: str, domain: Domain | None = None) -> list[str]:
+    """Longest-match lexicon scan against this domain's vocabulary.
+
+    Deterministic and instant, and it can never hallucinate a term that was not actually
+    said. Whole words only, so "od" does not fire inside "amlodipine".
+    """
+    lexicon = (domain or get_domain(None)).jargon
     lowered = f" {re.sub(r'[^a-z0-9 ]+', ' ', text.lower())} "
     hits: list[str] = []
-    for term in sorted(JARGON_LEXICON, key=len, reverse=True):
+    for term in sorted(lexicon, key=len, reverse=True):
         if f" {term} " in lowered and not any(term in h for h in hits):
             hits.append(term)
     return hits
 
 
-def extract_plan_rules(text: str, turn_index: int) -> list[CarePlanItem]:
+def extract_plan_rules(
+    text: str, turn_index: int, domain: Domain | None = None
+) -> list[CarePlanItem]:
     """Regex-based plan extraction, used as the floor under the LLM.
 
     Sentence-level so each item keeps its dosage and timing intact.
     """
+    patterns = (domain or get_domain(None)).patterns
     items: list[CarePlanItem] = []
     for sentence in re.split(r"(?<=[.!?।])\s+|\n", text):
         sentence = sentence.strip()
         if len(sentence) < 6:
             continue
-        for pattern, kind in _PLAN_PATTERNS:
+        for pattern, kind in patterns:
             if re.search(pattern, sentence, flags=re.I):
                 items.append(CarePlanItem(kind=kind, text=sentence, source_turn=turn_index))
                 break
@@ -182,10 +143,15 @@ class ConsultSession:
     session_id: str
     patient_language: str = "hi"
     doctor_language: str = "en"
+    domain_key: str = DEFAULT_DOMAIN
     turns: list[Turn] = field(default_factory=list)
     plan: list[CarePlanItem] = field(default_factory=list)
     glosses: dict[str, str] = field(default_factory=dict)
     started_at: float = field(default_factory=time.time)
+
+    @property
+    def domain(self) -> Domain:
+        return get_domain(self.domain_key)
 
     def transcript_text(self, speaker: str | None = None) -> str:
         return "\n".join(
@@ -195,6 +161,7 @@ class ConsultSession:
     def as_dict(self) -> dict[str, object]:
         return {
             "session_id": self.session_id,
+            "domain": self.domain.as_dict(),
             "patient_language": self.patient_language,
             "patient_language_name": SUPPORTED_LANGUAGES.get(
                 self.patient_language, self.patient_language
@@ -214,8 +181,17 @@ class ConsultAgent:
         self.engine = engine
         self.sessions: dict[str, ConsultSession] = {}
 
-    def start(self, session_id: str, patient_language: str = "hi") -> ConsultSession:
-        session = ConsultSession(session_id=session_id, patient_language=patient_language)
+    def start(
+        self,
+        session_id: str,
+        patient_language: str = "hi",
+        domain: str = DEFAULT_DOMAIN,
+    ) -> ConsultSession:
+        session = ConsultSession(
+            session_id=session_id,
+            patient_language=patient_language,
+            domain_key=get_domain(domain).key,
+        )
         self.sessions[session_id] = session
         return session
 
@@ -235,7 +211,7 @@ class ConsultAgent:
         turn = Turn(speaker=speaker, text=text, language=detected.value)
 
         translation = None
-        if speaker == "doctor" and turn.language != session.patient_language:
+        if speaker in ("doctor", session.domain.expert) and turn.language != session.patient_language:
             result = self.engine.translate.translate(
                 text, turn.language, session.patient_language
             )
@@ -245,12 +221,18 @@ class ConsultAgent:
                 "degraded": result.degraded,
             }
 
-        if speaker == "doctor":
-            turn.jargon = find_jargon(text)
+        # "doctor" is the clinic's name for the expert; a classroom calls them the
+        # teacher and a counter calls them the officer. The role is what matters.
+        if speaker in ("doctor", session.domain.expert):
+            turn.jargon = find_jargon(text, session.domain)
             for term in turn.jargon:
                 if term not in session.glosses:
-                    session.glosses[term] = self._gloss(term, session.patient_language)
-            session.plan.extend(extract_plan_rules(text, len(session.turns)))
+                    session.glosses[term] = self._gloss(
+                        term, session.patient_language, session.domain
+                    )
+            session.plan.extend(
+                extract_plan_rules(text, len(session.turns), session.domain)
+            )
 
         session.turns.append(turn)
         return {
@@ -260,10 +242,10 @@ class ConsultAgent:
             "plan_size": len(session.plan),
         }
 
-    def _gloss(self, term: str, language: str) -> str:
+    def _gloss(self, term: str, language: str, domain: Domain | None = None) -> str:
         """Lexicon first, model second. The lexicon is curated and safe; the model only
         fills gaps, and only for terms the doctor actually said."""
-        known = JARGON_LEXICON.get(term)
+        known = (domain or get_domain(None)).jargon.get(term)
         if known:
             return known
         generated = self.engine.llm.generate(
@@ -316,18 +298,10 @@ class ConsultAgent:
     def teachback_questions(self, session_id: str) -> list[str]:
         """The questions the patient is asked to answer in their own words."""
         session = self.get(session_id)
-        by_kind: dict[str, list[CarePlanItem]] = {}
-        for item in session.plan:
-            by_kind.setdefault(item.kind, []).append(item)
-
-        prompts = {
-            "medication": "Which medicines will you take, and how many times a day?",
-            "test": "Which tests will you get done, and do you need to fast?",
-            "followup": "When will you come back to see the doctor?",
-            "redflag": "What warning signs mean you must come back immediately?",
-            "lifestyle": "What changes will you make at home?",
-        }
-        return [prompts[k] for k in prompts if k in by_kind]
+        present = {item.kind for item in session.plan}
+        prompts = session.domain.questions
+        # Ordered by the domain's own consequence ordering, not dict insertion order.
+        return [prompts[k] for k in session.domain.kinds if k in present and k in prompts]
 
     def check_teachback(self, session_id: str, restatement: str) -> dict:
         """Score what the patient said back against the recorded plan.
@@ -403,22 +377,13 @@ class ConsultAgent:
             "unverified": False,
             "cross_lingual": cross_lingual,
             "missed": [p.as_dict() for p in missed],
-            "needs_repeat": [p.text for p in missed if p.kind in ("medication", "redflag")],
+            "needs_repeat": [p.text for p in missed if p.kind in session.domain.critical],
         }
 
 
 _STOPWORDS = {
     "will", "must", "should", "this", "that", "your", "with", "from", "have", "take",
     "come", "after", "before", "every", "when", "then", "also", "need", "please",
-}
-
-
-_CARD_HEADINGS = {
-    "medication": "Your medicines",
-    "test": "Tests to get done",
-    "followup": "Come back on",
-    "redflag": "Come back IMMEDIATELY if",
-    "lifestyle": "At home",
 }
 
 
@@ -429,17 +394,17 @@ class TakeHomeCard:
     instrument for the patient. Ordered by what will hurt them if they forget it.
     """
 
-    ORDER = ["redflag", "medication", "followup", "test", "lifestyle"]
-
     def __init__(self, agent: ConsultAgent) -> None:
         self.agent = agent
 
     def build(self, session_id: str) -> dict:
         session = self.agent.get(session_id)
+        domain = session.domain
         target = session.patient_language
         sections: list[dict] = []
 
-        for kind in self.ORDER:
+        # domain.kinds is ordered most-consequential-first, so the card is too.
+        for kind in domain.kinds:
             items = [p for p in session.plan if p.kind == kind]
             if not items:
                 continue
@@ -454,7 +419,7 @@ class TakeHomeCard:
                         "confirmed": item.confirmed,
                     }
                 )
-            sections.append({"kind": kind, "heading": _CARD_HEADINGS[kind], "items": lines})
+            sections.append({"kind": kind, "heading": domain.heading(kind), "items": lines})
 
         glossary = [
             {"term": term, "plain": gloss} for term, gloss in sorted(session.glosses.items())
@@ -463,6 +428,8 @@ class TakeHomeCard:
 
         return {
             "session_id": session_id,
+            "domain": domain.key,
+            "title": domain.card_title,
             "language": target,
             "language_name": SUPPORTED_LANGUAGES.get(target, target),
             "sections": sections,
@@ -475,7 +442,7 @@ class TakeHomeCard:
     def to_text(self, session_id: str) -> str:
         """Plain text rendering, for printing on a clinic's thermal printer."""
         card = self.build(session_id)
-        lines = [f"SETU - your visit summary ({card['language_name']})", "=" * 44, ""]
+        lines = [f"SETU - {card['title']} ({card['language_name']})", "=" * 44, ""]
         for section in card["sections"]:
             lines.append(section["heading"].upper())
             for item in section["items"]:
@@ -484,12 +451,13 @@ class TakeHomeCard:
                     lines.append(f"    ({item['source']})")
             lines.append("")
         if card["glossary"]:
-            lines.append("WORDS THE DOCTOR USED")
+            lines.append(f"WORDS THE {self.agent.get(session_id).domain.expert.upper()} USED")
             for entry in card["glossary"]:
                 lines.append(f"  - {entry['term']}: {entry['plain']}")
             lines.append("")
         if card["unconfirmed"]:
-            lines.append("PLEASE ASK THE DOCTOR TO REPEAT")
+            expert = self.agent.get(session_id).domain.expert.upper()
+            lines.append(f"PLEASE ASK THE {expert} TO REPEAT")
             for text in card["unconfirmed"]:
                 lines.append(f"  - {text}")
         return "\n".join(lines)
