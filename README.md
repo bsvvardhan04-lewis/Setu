@@ -1,145 +1,172 @@
 <div align="center">
 
-# SETU — Snapdragon Edge Translation & Understanding
+# SETU
 
-**An offline "Jan Seva Kendra in a laptop."**
-Point it at a government letter, a hospital prescription, or a bank notice.
-It reads the page, explains it in your language, answers your questions, and fills the
-form back for you — **entirely on the Snapdragon NPU, with the Wi-Fi turned off.**
+### The doctor speaks English. The patient thinks in Hindi.
+### SETU makes sure they actually understood — offline, on the NPU.
 
-*setu* (सेतु) — Sanskrit for **bridge**.
+*setu* (सेतु) — Sanskrit for **bridge**
+
+Built for the Snapdragon® AI Lab Build & Present Challenge
 
 </div>
 
 ---
 
-## 1. The problem
+## The problem nobody measures
 
-India runs on paper that most Indians cannot read.
+A patient at a district hospital is told, in English, that they have hypertension, to take
+amlodipine 5 mg *od*, to get a fasting lipid profile, and to come back immediately if they
+get chest pain.
 
-- ~**1.05 billion** people do not speak English, yet the overwhelming majority of official
-  forms, insurance policies, loan documents, and prescriptions are English-first.
-- Rural connectivity is intermittent, and cloud AI is **useless in a village office at 11:40 AM
-  when the link drops mid-form.**
-- The documents people most need help with — Aadhaar, land records, medical reports, salary
-  slips — are exactly the documents you must **never** upload to a cloud API.
+They nod. They say *"haan ji."* They go home.
 
-The existing answer is a human intermediary at a Common Service Centre, at ₹30–₹100 per document,
-with a queue, and with your private papers in a stranger's hands.
+They did not understand "od". They did not understand "fasting". And they have no idea
+that chest pain means *return now* rather than *wait for the follow-up*.
 
-## 2. The solution
+This is not a translation problem — a phone can translate. It is a **comprehension**
+problem, and nobody in the room finds out it happened. The WHO puts adherence to long-term
+therapy in developing countries at around **50%**, and "the patient never understood the
+instruction" is a large, unglamorous share of that.
 
-SETU is a fully local, multimodal, multilingual document + voice agent for
-**Snapdragon-powered HP PCs**. Everything below happens with the network adapter disabled:
+## What SETU does
 
-| You do | SETU does | Runs on |
-| --- | --- | --- |
-| Put a page under the webcam, or drop a PDF | Detects + reads text, incl. Devanagari/Telugu/Tamil | **NPU** (detector + recognizer) |
-| Say "इसमें क्या लिखा है?" | Wake → VAD → ASR → language ID | **NPU** (Whisper) |
-| Ask anything about the page | Grounded RAG answer with page-region citations | **NPU** (embeddings) + **NPU** (LLM) |
-| Say "मेरा नाम रमेश कुमार है" | Fills the matching field, transliterates, validates | LLM + rule layer |
-| Listen | Speaks the answer back in your language | CPU/NPU (TTS) |
+A laptop sits on the doctor's desk and listens to the whole consultation. With the Wi-Fi off.
 
-Nine models. One pipeline. Zero bytes leave the machine.
+| Stage | What happens |
+| --- | --- |
+| **Listen** | VAD gates the mic; only real speech reaches Whisper. Continuous, all day, on battery. |
+| **Bridge** | Each turn is transcribed, language-identified, and shown to the patient in their own language. |
+| **Flag jargon** | "od", "fasting", "lipid profile", "chronic" — caught as spoken, glossed in plain words the doctor can read aloud. |
+| **Build the plan** | Instructions are extracted as they are given: medicines, tests, follow-up, red flags, lifestyle. |
+| **Teach back** | The patient is asked to repeat the plan in their own words. SETU checks it against what was actually said. |
+| **Take-home card** | Printed, in their language, ordered by what will hurt them if they forget it. |
 
-## 3. Why this *needs* Snapdragon (and would not work otherwise)
+The moment that matters is the fifth one:
 
-This is the part most submissions hand-wave. Ours is measured, not asserted.
+> **2 of 5 understood**
+> The patient did not repeat these back, and they are the ones that matter:
+> ✗ *If you get chest pain or breathlessness, come immediately to the emergency.*
 
-1. **The workload is sustained, not bursty.** A CSC operator runs this 6–8 hours a day on
-   battery. Continuous ASR + OCR + LLM on the CPU flattens an X-series battery in ~2 hours and
-   thermally throttles the whole machine. On the Hexagon NPU the same pipeline is a background
-   citizen. `docs/BENCHMARKS.md` reports the measured mW.
-2. **The privacy constraint is absolute.** Land records and medical reports legally and
-   ethically cannot be sent to a cloud endpoint. On-device is not an optimization here — it is
-   the product requirement.
-3. **We exploit heterogeneity, not just "the NPU".** SETU ships **Hexa-Router**, a
-   power- and thermal-aware scheduler that places each of the nine models on NPU / GPU / CPU
-   per-inference, learns each model's real cost on *this* machine with an EWMA cost model, and
-   re-plans when you unplug the charger. See `src/setu/runtime/router.py`.
-4. **Pipeline overlap.** OCR of page *n+1* runs on the NPU while the LLM prefills page *n*,
-   because they are different engines. Wall-clock for a 6-page document drops materially versus
-   naive sequential execution.
+The doctor learns this **while the patient is still in the room.**
 
-## 4. Architecture
+## Why this needs Snapdragon
 
-```
-                       ┌──────────────────────────────────────────┐
-  webcam / PDF ───────►│  DocAgent    detect → recognize → layout │
-  microphone  ───────►│  VoiceAgent  VAD → ASR → LID             │──┐
-  typed text  ───────►│  FormAgent   schema → slot-fill → verify │  │
-                       └──────────────────────────────────────────┘  │
-                                       │                             │
-                              ┌────────▼─────────┐          ┌────────▼────────┐
-                              │  Local RAG store │          │  LLM (Genie /   │
-                              │  sqlite + MiniLM │◄────────►│  ORT-GenAI QNN) │
-                              └──────────────────┘          └─────────────────┘
-                                       │
-                       ┌───────────────▼────────────────────────────┐
-                       │   HEXA-ROUTER   placement + telemetry      │
-                       │   QNN(HTP) │ DirectML(Adreno) │ CPU(oneDNN)│
-                       └────────────────────────────────────────────┘
-```
+Three reasons, and only the third is a performance argument.
 
-Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+**1. It is legally and ethically un-cloudable.** A consultation is protected health
+information. "Send the audio to a data centre" is not a design choice we get to make.
+On-device is the requirement, not the optimisation.
 
-## 5. Models
+**2. It has to work where the connection does not.** A PHC with an intermittent link is
+the normal case, not the edge case.
 
-Nine models, all from **Qualcomm AI Hub** or permissively-licensed open source.
-Exact assets, licences, quantisation and provenance: [`docs/MODELS.md`](docs/MODELS.md).
+**3. It is a sustained workload, not a bursty one.** Continuous ASR for a six-hour clinic
+day is precisely the thing an NPU exists for and a CPU cannot afford. This is measurable,
+and we measure it rather than asserting it — see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)
+and [`docs/AIHUB_PROFILE.md`](docs/AIHUB_PROFILE.md).
+
+## Hexa-Router
+
+Most on-device demos hard-code *"put everything on the NPU."* That is wrong for a real
+workload: the NPU is shared and finite, some ops fall back regardless, and the right answer
+changes the moment the charger comes out.
+
+**Hexa-Router** ([`src/setu/runtime/router.py`](src/setu/runtime/router.py)) decides
+placement per model, per request, from four inputs:
+
+- what each model can run on at all, and its rough cost shape
+- live power state — AC vs battery, charge level, thermal pressure
+- request priority — a human waiting for a caption, or a background index
+- **a cost model it learns on your machine**, from measured latency and energy, so routing
+  improves the longer the app runs
+
+Placement is sticky: rebuilding a QNN session costs hundreds of milliseconds, so migration
+needs to clear a margin before it is worth paying for. The UI shows every decision live.
+
+## Models
+
+Nine models. Sources, licences, quantisation and export recipes are itemised in
+[`docs/MODELS.md`](docs/MODELS.md).
 
 | Role | Model | Source | Precision |
 | --- | --- | --- | --- |
-| Speech recognition | Whisper Small / Base | Qualcomm AI Hub | INT8 encoder + decoder |
+| Speech recognition | Whisper Small v2 | **Qualcomm AI Hub** | INT8 encoder + decoder |
+| Reasoning | Llama 3.2 3B Instruct | **Qualcomm AI Hub** (Genie) | W4A16 |
 | Voice activity | Silero VAD | open source (MIT) | INT8 |
-| Text detection | PaddleOCR DB detector | open source (Apache-2.0) | INT8 |
-| Text recognition | PaddleOCR / TrOCR recogniser | AI Hub / open source | INT8 |
-| Language ID | fastText-lid compact | open source (MIT) | FP16 |
-| Reasoning / chat | Llama 3.2 3B Instruct | Qualcomm AI Hub (Genie) | W4A16 |
-| Translation | IndicTrans2 distilled | AI4Bharat (MIT) | INT8 |
+| Translation | IndicTrans2 distilled 200M | AI4Bharat (MIT) | INT8 |
 | Embeddings | all-MiniLM-L6-v2 | open source (Apache-2.0) | INT8 |
-| Speech synthesis | Piper VITS (Indic voices) | open source (MIT) | FP16 |
+| Text detection | PaddleOCR DB | open source (Apache-2.0) | INT8 |
+| Text recognition | PP-OCRv4 rec | open source (Apache-2.0) | INT8 |
+| Language ID | Unicode-script identifier | in-repo | — |
+| Speech synthesis | Piper VITS | open source (MIT) | FP16 |
 
-## 6. Run it
+Twelve languages: Hindi, Telugu, Tamil, Bengali, Marathi, Kannada, Malayalam, Gujarati,
+Punjabi, Odia, Urdu, English.
+
+## Run it
 
 ```bash
 git clone <this-repo> && cd setu
 python -m venv .venv && .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -e .
 python -m setu.server.app
 ```
 
-Open <http://127.0.0.1:8756>.
+Open <http://127.0.0.1:8756> and press **Replay sample visit**.
 
-SETU runs on **any** Windows/macOS/Linux machine out of the box — the runtime layer degrades
-gracefully to CPU and to deterministic stub backends, so reviewers can exercise the whole app
-without a Snapdragon device. On a Snapdragon X / X2 PC with QAIRT installed it lights up the
-NPU automatically; `GET /api/system` tells you exactly which engine every model landed on.
+**It runs on any machine.** Every model has a labelled fallback, so the whole product —
+transcript, jargon glossing, care plan, teach-back, take-home card — works on a reviewer's
+laptop with no weights downloaded and no Snapdragon hardware. Anything running on a
+fallback is marked `degraded` in the API and on screen. SETU never passes a stub off as a
+real inference.
 
-Snapdragon first-time setup: [`scripts/setup_windows_arm64.ps1`](scripts/setup_windows_arm64.ps1).
+On a Snapdragon PC, `scripts\setup_windows_arm64.ps1` installs the QNN execution provider
+and the NPU lights up automatically. `python -m setu.cli doctor` prints exactly what your
+machine can do.
 
-## 7. Benchmarks
+## Verify the claims
 
 ```bash
-python scripts/run_bench.py --iters 30 --report docs/BENCHMARKS.md
+python -m setu.cli doctor           # what this machine actually has
+python scripts/run_bench.py         # local latency + marginal energy per inference
+python scripts/aihub_profile.py --all   # real Snapdragon hardware, via AI Hub
 ```
 
-The harness measures per-model p50/p90 latency **and real energy per inference**, sampled from
-the Windows `root\WMI BatteryStatus.DischargeRate` counter — actual milliwatts off the battery,
-not a estimate. It emits the NPU-vs-CPU comparison table that backs every claim in this README.
+`aihub_profile.py` compiles each graph as a QNN context binary, runs it on physical
+Snapdragon silicon in Qualcomm's cloud, and reports what fraction of layers actually stayed
+on the NPU rather than falling back to CPU — **with a link to each job on Qualcomm's own
+site**, so every number in this repo can be checked independently.
 
-## 8. Repository map
+Energy is measured from the Windows `BatteryStatus.DischargeRate` counter with a measured
+idle baseline subtracted, so the figures are a model's *marginal* cost, not the whole
+laptop's draw.
+
+## Repository
 
 | Path | What lives there |
 | --- | --- |
-| `src/setu/runtime/` | EP discovery, **Hexa-Router**, power telemetry, session cache |
-| `src/setu/models/` | One adapter per model role, each with a graceful fallback |
-| `src/setu/pipeline/` | DocAgent / VoiceAgent / FormAgent orchestration |
-| `src/setu/store/` | Local sqlite vector store (no server, no network) |
-| `src/setu/server/` | FastAPI backend + static local UI |
-| `src/setu/bench/` | Measurement harness |
-| `docs/` | Architecture, models, benchmarks, demo script, pitch |
+| `src/setu/runtime/` | Hexa-Router, EP discovery, power telemetry, session cache |
+| `src/setu/models/` | Nine adapters, each with a labelled fallback |
+| `src/setu/pipeline/` | ConsultAgent, take-home card, plus document and form agents |
+| `src/setu/server/` | FastAPI backend and the single-file offline UI |
+| `src/setu/bench/` | Latency and energy harness |
+| `scripts/` | AI Hub profiling, model fetch, Snapdragon setup |
+| `docs/` | Architecture, model provenance, benchmarks, demo script |
 
-## 9. Licence
+## Honest limitations
 
-MIT. See `LICENSE`. Model licences are itemised per-model in `docs/MODELS.md`.
+- **Whisper is weaker on Telugu, Kannada and Odia than on Hindi.** The mitigation is
+  AI4Bharat's IndicWhisper through the same AI Hub export path; see `docs/MODELS.md`.
+- **Teach-back across languages needs the translation model.** Without it SETU reports
+  *"could not verify"* rather than scoring the patient as having understood nothing —
+  a false negative here would send a doctor away with the wrong conclusion.
+- **This is a comprehension aid, not a medical device.** It does not diagnose, does not
+  recommend treatment, and never overrides the clinician. Every care-plan item is extracted
+  verbatim from what the doctor said.
+- The jargon lexicon is curated for an Indian OPD and is deliberately small; the LLM only
+  fills gaps for terms actually spoken.
+
+## Licence
+
+MIT — see [`LICENSE`](LICENSE). Model licences are itemised per model in `docs/MODELS.md`.
