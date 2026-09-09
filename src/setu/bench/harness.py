@@ -34,6 +34,7 @@ class BenchRow:
     energy_mwh: list[float] = field(default_factory=list)
     degraded: bool = False
     error: str | None = None
+    baseline_mw: float | None = None
 
     def _pct(self, p: float) -> float | None:
         if not self.latencies_ms:
@@ -44,6 +45,14 @@ class BenchRow:
 
     def as_dict(self) -> dict[str, object]:
         mean_energy = statistics.fmean(self.energy_mwh) if self.energy_mwh else None
+
+        # Marginal energy: what this model cost ON TOP of an idle machine.
+        marginal = None
+        if mean_energy is not None and self.baseline_mw and self.latencies_ms:
+            seconds = statistics.fmean(self.latencies_ms) / 1000.0
+            baseline_mwh = self.baseline_mw * (seconds / 3600.0)
+            marginal = max(0.0, mean_energy - baseline_mwh)
+
         return {
             "model": self.model,
             "device": self.device,
@@ -54,6 +63,7 @@ class BenchRow:
             if self.latencies_ms
             else None,
             "energy_mwh_per_inference": None if mean_energy is None else round(mean_energy, 5),
+            "marginal_mwh_per_inference": None if marginal is None else round(marginal, 6),
             "degraded": self.degraded,
             "error": self.error,
         }
@@ -108,6 +118,26 @@ def _workloads(settings: Settings) -> dict[str, Callable]:
     }
 
 
+def _idle_baseline_mw(seconds: float = 3.0) -> float | None:
+    """Whole-system draw with SETU doing nothing.
+
+    Without this the energy column is dishonest. The battery counter reports what the
+    entire laptop is drawing - screen, radios, background services - so attributing all
+    of it to one inference would overstate the model's cost by an order of magnitude.
+    Subtracting a quiet baseline gives the *marginal* cost of running the model, which is
+    the only figure that makes an NPU-versus-CPU comparison mean anything.
+    """
+    from ..runtime.telemetry import _sampler
+
+    samples: list[float] = []
+    deadline = time.perf_counter() + seconds
+    while time.perf_counter() < deadline:
+        value = _sampler.force()
+        if value is not None:
+            samples.append(value)
+    return statistics.fmean(samples) if samples else None
+
+
 def run_benchmarks(
     settings: Settings,
     *,
@@ -123,11 +153,18 @@ def run_benchmarks(
     workloads = _workloads(settings)
     selected = {k: v for k, v in workloads.items() if not models or k in models}
 
+    baseline_mw = _idle_baseline_mw()
+
     rows: list[BenchRow] = []
     for device in targets:
         cache = SessionCache(_pinned_router(device), settings.model_root)
         for name, workload in selected.items():
-            row = BenchRow(model=name, device=device.value, iterations=iterations)
+            row = BenchRow(
+                model=name,
+                device=device.value,
+                iterations=iterations,
+                baseline_mw=baseline_mw,
+            )
             try:
                 for _ in range(warmup):
                     workload(cache)
@@ -150,6 +187,7 @@ def run_benchmarks(
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "iterations": iterations,
         "warmup": warmup,
+        "idle_baseline_mw": None if baseline_mw is None else round(baseline_mw, 1),
         "rows": [r.as_dict() for r in rows],
     }
 
@@ -173,18 +211,29 @@ def to_markdown(results: dict) -> str:
         "only populated when the machine is running on battery. `degraded` marks a row",
         "that ran on a fallback path because the model asset was absent.",
         "",
-        "| Model | Device | p50 ms | p90 ms | mWh / inference | Degraded | Error |",
-        "| --- | --- | ---: | ---: | ---: | :-: | --- |",
+        "**How to read the energy columns.** That counter reports what the *whole laptop*",
+        "is drawing - screen, radios, background services - not what one model costs. So",
+        "`system mWh` is the total draw during the inference window, and `marginal mWh` is",
+        f"that figure minus a measured idle baseline of "
+        f"**{results.get('idle_baseline_mw') or 'n/a'} mW**. Only the marginal column is a",
+        "fair basis for comparing NPU against CPU; quoting the system column as the cost of",
+        "a model would overstate it by an order of magnitude.",
+        "",
+        "| Model | Device | p50 ms | p90 ms | system mWh | marginal mWh | Degraded | Error |",
+        "| --- | --- | ---: | ---: | ---: | ---: | :-: | --- |",
     ]
     for row in results["rows"]:
         lines.append(
-            "| {model} | {device} | {p50} | {p90} | {energy} | {deg} | {err} |".format(
+            "| {model} | {device} | {p50} | {p90} | {energy} | {marginal} | {deg} | {err} |".format(
                 model=row["model"],
                 device=row["device"],
                 p50=row["p50_ms"] if row["p50_ms"] is not None else "-",
                 p90=row["p90_ms"] if row["p90_ms"] is not None else "-",
                 energy=row["energy_mwh_per_inference"]
                 if row["energy_mwh_per_inference"] is not None
+                else "-",
+                marginal=row.get("marginal_mwh_per_inference")
+                if row.get("marginal_mwh_per_inference") is not None
                 else "-",
                 deg="yes" if row["degraded"] else "",
                 err=(row["error"] or "")[:60],
@@ -215,8 +264,9 @@ def _speedup_table(rows: list[dict]) -> list[str]:
         if not cpu or not npu or not cpu["p50_ms"] or not npu["p50_ms"]:
             continue
         speedup = cpu["p50_ms"] / npu["p50_ms"]
-        cpu_e = cpu["energy_mwh_per_inference"]
-        npu_e = npu["energy_mwh_per_inference"]
+        # Compare marginal energy, not system draw - see the note above the main table.
+        cpu_e = cpu.get("marginal_mwh_per_inference")
+        npu_e = npu.get("marginal_mwh_per_inference")
         ratio = f"{npu_e / cpu_e:.2f}x" if cpu_e and npu_e else "-"
         out.append(
             f"| {model} | {cpu['p50_ms']} | {npu['p50_ms']} | {speedup:.2f}x | {ratio} |"
