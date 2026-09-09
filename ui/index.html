@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SETU — offline consultation companion</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --card: #ffffff;
+    --ink: #10151c;
+    --muted: #5b6672;
+    --line: #dfe4ea;
+    --accent: #0f7b6c;
+    --accent-soft: #e6f2f0;
+    --danger: #b3261e;
+    --danger-soft: #fdecea;
+    --warn: #8a5a00;
+    --warn-soft: #fdf3e0;
+    --npu: #6ee7b7;
+    --cpu: #93c5fd;
+    --shell: #0d1420;
+    --shell-ink: #e7edf5;
+    --shell-muted: #8ea0b8;
+    --radius: 10px;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ---------------------------------------------------------------- header */
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 18px; height: 56px; flex: none;
+    background: var(--card); border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: baseline; gap: 9px; }
+  .brand b { font-size: 19px; letter-spacing: -0.02em; }
+  .brand span { color: var(--muted); font-size: 12.5px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; white-space: nowrap;
+  }
+  .pill.offline { background: var(--accent-soft); color: var(--accent); }
+  .pill.offline::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent);
+  }
+  .spacer { flex: 1; }
+  .metrics { display: flex; gap: 20px; font-size: 12px; color: var(--muted); }
+  .metrics b { display: block; font: 600 15px/1.2 var(--mono); color: var(--ink); }
+
+  /* ------------------------------------------------------------------ main */
+  main {
+    flex: 1; min-height: 0;
+    display: grid; grid-template-columns: minmax(0,1fr) 400px;
+    gap: 14px; padding: 14px;
+  }
+  .col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); display: flex; flex-direction: column; min-height: 0;
+  }
+  .card > h2 {
+    margin: 0; padding: 11px 14px; flex: none;
+    font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--muted); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card > h2 .count {
+    margin-left: auto; font: 600 11px var(--mono); color: var(--muted);
+    background: var(--bg); padding: 2px 7px; border-radius: 999px;
+  }
+  .body { overflow-y: auto; padding: 14px; }
+  .empty { color: var(--muted); font-size: 13.5px; text-align: center; padding: 26px 12px; }
+</style>
+<style>
+  /* ------------------------------------------------------------- transcript */
+  .turn { display: flex; gap: 10px; margin-bottom: 14px; }
+  .turn .who {
+    flex: none; width: 30px; height: 30px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 11px; font-weight: 700;
+  }
+  .turn.doctor .who { background: var(--accent-soft); color: var(--accent); }
+  .turn.patient .who { background: #eef1f5; color: var(--muted); }
+  .turn .bubble { flex: 1; min-width: 0; }
+  .turn .src { font-size: 14.5px; }
+  .turn.patient .src { color: var(--muted); font-style: italic; }
+  .turn .xlate {
+    margin-top: 5px; padding-left: 11px; border-left: 3px solid var(--accent);
+    font-size: 14.5px; color: var(--accent);
+  }
+  .turn .xlate.pending { border-color: var(--line); color: var(--muted); font-style: italic; }
+  mark { background: #fff3bf; padding: 0 2px; border-radius: 3px; cursor: help; }
+
+  /* ------------------------------------------------------------- care plan */
+  .grp { margin-bottom: 14px; }
+  .grp:last-child { margin-bottom: 0; }
+  .grp h3 {
+    margin: 0 0 6px; font-size: 11px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+  }
+  .grp.redflag h3 { color: var(--danger); }
+  .item {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 8px 10px; border-radius: 7px; background: var(--bg);
+    font-size: 13.5px; margin-bottom: 5px;
+  }
+  .grp.redflag .item { background: var(--danger-soft); }
+  .item .tick { flex: none; font-size: 13px; line-height: 1.35; }
+  .item.covered .tick { color: var(--accent); }
+  .item.missed .tick { color: var(--danger); }
+  .item.unknown .tick { color: var(--line); }
+
+  /* -------------------------------------------------------------- glossary */
+  .gloss { padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
+  .gloss:last-child { border: 0; }
+  .gloss b { color: var(--ink); }
+  .gloss span { color: var(--muted); }
+
+  /* ------------------------------------------------------------- teachback */
+  .verdict { padding: 12px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 13.5px; }
+  .verdict.good { background: var(--accent-soft); color: var(--accent); }
+  .verdict.bad { background: var(--danger-soft); color: var(--danger); }
+  .verdict.unsure { background: var(--warn-soft); color: var(--warn); }
+  .verdict b { display: block; font-size: 15px; margin-bottom: 3px; }
+
+  /* --------------------------------------------------------------- controls */
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 14px; flex: none;
+              border-top: 1px solid var(--line); }
+  button {
+    font: inherit; font-size: 13px; font-weight: 600;
+    padding: 8px 14px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  button:disabled { opacity: .45; cursor: default; }
+  select, input[type=text] {
+    font: inherit; font-size: 13px; padding: 7px 9px;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--card);
+  }
+  input[type=text] { flex: 1; min-width: 120px; }
+
+  /* ------------------------------------------------------------ compute bar */
+  .compute {
+    flex: none; background: var(--shell); color: var(--shell-ink);
+    padding: 10px 18px; display: flex; align-items: center; gap: 16px;
+    overflow-x: auto;
+  }
+  .compute .label {
+    flex: none; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--shell-muted); line-height: 1.3;
+  }
+  .chips { display: flex; gap: 7px; }
+  .chip {
+    flex: none; padding: 5px 9px; border-radius: 6px; background: #182437;
+    font: 11px/1.35 var(--mono); white-space: nowrap;
+  }
+  .chip i { font-style: normal; display: block; color: var(--shell-muted); font-size: 10px; }
+  .chip.npu { box-shadow: inset 0 0 0 1px var(--npu); }
+  .chip.npu i { color: var(--npu); }
+  .chip.cpu { box-shadow: inset 0 0 0 1px #334a68; }
+  .chip.cpu i { color: var(--cpu); }
+  .compute .draw { margin-left: auto; flex: none; text-align: right; }
+  .compute .draw b { font: 600 17px var(--mono); display: block; }
+  .note {
+    font-size: 12px; color: var(--muted); padding: 0 14px 12px; flex: none;
+  }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><b>SETU</b> <span>offline consultation companion</span></div>
+  <span class="pill offline" id="netPill">on-device · no network</span>
+  <div class="spacer"></div>
+  <div class="metrics">
+    <div>battery draw<b id="mDraw">—</b></div>
+    <div>models on NPU<b id="mNpu">—</b></div>
+    <div>visit length<b id="mDur">0:00</b></div>
+  </div>
+</header>
+
+<main>
+  <!-- ------------------------------------------------------- transcript --- -->
+  <div class="col">
+    <section class="card" style="flex:1">
+      <h2>Consultation <span class="count" id="cTurns">0 turns</span></h2>
+      <div class="body" id="transcript">
+        <p class="empty">Start a visit, or replay the sample consultation.<br />
+          Everything runs on this machine.</p>
+      </div>
+      <div class="controls">
+        <select id="lang" title="Patient's language"></select>
+        <button class="primary" id="btnDemo">▶ Replay sample visit</button>
+        <button id="btnStop" disabled>Stop</button>
+      </div>
+      <div class="controls" style="border-top:0;padding-top:0">
+        <select id="speaker">
+          <option value="doctor">Doctor</option>
+          <option value="patient">Patient</option>
+        </select>
+        <input type="text" id="say" placeholder="Type what was said, then press Enter" />
+        <button id="btnSay">Add</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ------------------------------------------------------------ panel --- -->
+  <div class="col">
+    <section class="card" style="flex:1.3">
+      <h2>Care plan <span class="count" id="cPlan">0</span></h2>
+      <div class="body" id="plan">
+        <p class="empty">Instructions the doctor gives will collect here.</p>
+      </div>
+    </section>
+
+    <section class="card" style="flex:1">
+      <h2>Words the patient likely missed <span class="count" id="cGloss">0</span></h2>
+      <div class="body" id="glossary">
+        <p class="empty">Medical jargon is flagged as it is spoken.</p>
+      </div>
+    </section>
+
+    <section class="card" style="flex:none">
+      <h2>Teach-back check</h2>
+      <div class="body" id="teachback" style="max-height:230px">
+        <p class="empty">At the end of the visit, ask the patient to repeat the plan.</p>
+      </div>
+      <div class="controls">
+        <button class="primary" id="btnTeach">Run teach-back</button>
+        <button id="btnCard">Take-home card</button>
+      </div>
+    </section>
+  </div>
+</main>
+
+<!-- ------------------------------------------------------------- compute --- -->
+<div class="compute">
+  <div class="label">Hexa-Router<br />live placement</div>
+  <div class="chips" id="chips"></div>
+  <div class="draw">
+    <span class="label">drawing now</span>
+    <b id="cDraw">—</b>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const api = async (path, opts) => {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error((await res.text()).slice(0, 200));
+  return res.json();
+};
+const post = (path, body) =>
+  api(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+const esc = (s) =>
+  String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const state = {
+  id: "visit-" + Date.now(),
+  started: null,
+  glosses: {},
+  plan: [],
+  playing: false,
+  cancel: false,
+};
+
+/* ------------------------------------------------------------------ startup */
+async function boot() {
+  const langs = await api("/api/languages");
+  $("lang").innerHTML = Object.entries(langs.languages)
+    .map(([k, v]) => `<option value="${k}"${k === langs.default ? " selected" : ""}>${esc(v)}</option>`)
+    .join("");
+  await startVisit();
+  const sys = await api("/api/system");
+  paintCompute(sys.router, sys.power);
+  setInterval(tickDuration, 1000);
+}
+
+async function startVisit() {
+  state.id = "visit-" + Date.now();
+  state.started = null;
+  state.glosses = {};
+  state.plan = [];
+  await post("/api/consult/start", {
+    session_id: state.id,
+    patient_language: $("lang").value,
+  });
+}
+
+function tickDuration() {
+  if (!state.started) return;
+  const s = Math.floor((Date.now() - state.started) / 1000);
+  $("mDur").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/* -------------------------------------------------------------------- turns */
+async function addTurn(speaker, text) {
+  if (!text.trim()) return;
+  if (!state.started) state.started = Date.now();
+  const result = await post("/api/consult/turn", {
+    session_id: state.id,
+    speaker,
+    text,
+  });
+  renderTurn(result);
+  Object.assign(state.glosses, result.new_glosses || {});
+  renderGlossary();
+  await refreshPlan();
+  paintCompute(result.router, result.power);
+}
+
+/* Wrap each jargon term in a <mark>, without RegExp.
+   Terms come from our own lexicon and can contain spaces, so escaping them for a
+   dynamic RegExp is a needless source of bugs. All match positions are computed on
+   the original string before any insertion, so a later term can never match inside
+   an earlier term's tooltip text. */
+const isWordChar = (c) => c >= "a" && c <= "z" || c >= "0" && c <= "9";
+
+function markJargon(html, terms, glossFor) {
+  const lower = html.toLowerCase();
+  const hits = [];
+  for (const term of terms) {
+    const needle = term.toLowerCase();
+    if (!needle) continue;
+    for (let from = 0; ; ) {
+      const at = lower.indexOf(needle, from);
+      if (at === -1) break;
+      const end = at + needle.length;
+      // Whole words only. Without this, the abbreviation "od" (once a day) matches
+      // inside "amlodipine", which is exactly the kind of sloppiness that makes a
+      // clinical tool untrustworthy.
+      const before = at === 0 ? "" : lower[at - 1];
+      const after = end >= lower.length ? "" : lower[end];
+      if (!isWordChar(before) && !isWordChar(after)) hits.push({ at, end, term });
+      from = end;
+    }
+  }
+  hits.sort((a, b) => a.at - b.at || b.end - a.end);
+
+  let out = "";
+  let cursor = 0;
+  for (const hit of hits) {
+    if (hit.at < cursor) continue; // overlapping match: the first one wins
+    out +=
+      html.slice(cursor, hit.at) +
+      '<mark title="' + esc(glossFor(hit.term)) + '">' +
+      html.slice(hit.at, hit.end) +
+      "</mark>";
+    cursor = hit.end;
+  }
+  return out + html.slice(cursor);
+}
+
+function renderTurn(result) {
+  const box = $("transcript");
+  if (box.querySelector(".empty")) box.innerHTML = "";
+  const turn = result.turn;
+
+  const glossFor = (t) => state.glosses[t] || (result.new_glosses || {})[t] || "";
+  const src = markJargon(esc(turn.text), turn.jargon || [], glossFor);
+
+  let xlate = "";
+  if (result.translation) {
+    const t = result.translation;
+    xlate = t.degraded
+      ? `<div class="xlate pending">translation model not loaded — showing source</div>`
+      : `<div class="xlate">${esc(t.text)}</div>`;
+  }
+
+  const el = document.createElement("div");
+  el.className = `turn ${turn.speaker}`;
+  el.innerHTML =
+    `<div class="who">${turn.speaker === "doctor" ? "Dr" : "Pt"}</div>` +
+    `<div class="bubble"><div class="src">${src}</div>${xlate}</div>`;
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+  $("cTurns").textContent = box.querySelectorAll(".turn").length + " turns";
+}
+</script>
+<script>
+/* ---------------------------------------------------------------- care plan */
+const KIND_LABEL = {
+  redflag: "Come back immediately if",
+  medication: "Medicines",
+  followup: "Next visit",
+  test: "Tests",
+  lifestyle: "At home",
+};
+const KIND_ORDER = ["redflag", "medication", "followup", "test", "lifestyle"];
+
+async function refreshPlan() {
+  const session = await api(`/api/consult/${state.id}`);
+  state.plan = session.plan;
+  renderPlan();
+}
+
+function renderPlan() {
+  const box = $("plan");
+  $("cPlan").textContent = state.plan.length;
+  if (!state.plan.length) {
+    box.innerHTML = `<p class="empty">Instructions the doctor gives will collect here.</p>`;
+    return;
+  }
+  box.innerHTML = KIND_ORDER.map((kind) => {
+    const items = state.plan.filter((p) => p.kind === kind);
+    if (!items.length) return "";
+    return (
+      `<div class="grp ${kind}"><h3>${KIND_LABEL[kind]}</h3>` +
+      items
+        .map((p) => {
+          const cls = p.checked === undefined ? "unknown" : p.confirmed ? "covered" : "missed";
+          const tick = p.checked === undefined ? "○" : p.confirmed ? "✓" : "✗";
+          return `<div class="item ${cls}"><span class="tick">${tick}</span><span>${esc(p.text)}</span></div>`;
+        })
+        .join("") +
+      `</div>`
+    );
+  }).join("");
+}
+
+function renderGlossary() {
+  const entries = Object.entries(state.glosses);
+  $("cGloss").textContent = entries.length;
+  $("glossary").innerHTML = entries.length
+    ? entries
+        .map(([t, g]) => `<div class="gloss"><b>${esc(t)}</b> — <span>${esc(g)}</span></div>`)
+        .join("")
+    : `<p class="empty">Medical jargon is flagged as it is spoken.</p>`;
+}
+
+/* ---------------------------------------------------------------- teachback */
+async function runTeachback() {
+  const questions = await api(`/api/consult/${state.id}/teachback`);
+  if (!questions.questions.length) {
+    $("teachback").innerHTML = `<p class="empty">No instructions recorded yet.</p>`;
+    return;
+  }
+  const said = prompt(
+    "Ask the patient to repeat the plan in their own words:\n\n" +
+      questions.questions.map((q) => "• " + q).join("\n"),
+    state.suggested || ""
+  );
+  if (said === null) return;
+
+  const result = await post("/api/consult/teachback", {
+    session_id: state.id,
+    restatement: said,
+  });
+
+  let verdict;
+  if (result.unverified) {
+    verdict = `<div class="verdict unsure"><b>Could not verify</b>${esc(result.reason)}</div>`;
+  } else if (result.needs_repeat.length) {
+    verdict =
+      `<div class="verdict bad"><b>${result.covered} of ${result.total} understood</b>` +
+      `The patient did not repeat back these, and they are the ones that matter:</div>` +
+      result.needs_repeat.map((t) => `<div class="item missed"><span class="tick">✗</span><span>${esc(t)}</span></div>`).join("");
+  } else {
+    verdict = `<div class="verdict good"><b>${result.covered} of ${result.total} understood</b>The patient repeated the plan back correctly.</div>`;
+  }
+  $("teachback").innerHTML = verdict;
+
+  state.plan = result.plan.map((p) => ({ ...p, checked: true }));
+  renderPlan();
+}
+
+async function showCard() {
+  const card = await api(`/api/consult/${state.id}/card`);
+  const w = window.open("", "_blank", "width=520,height=720");
+  w.document.write(
+    `<title>Take-home card</title><pre style="font:14px/1.6 ui-monospace,monospace;` +
+      `padding:26px;white-space:pre-wrap">${esc(card.printable)}</pre>`
+  );
+  w.document.close();
+}
+</script>
+<script>
+/* ------------------------------------------------------------ compute panel */
+function paintCompute(router, power) {
+  if (router && router.placements) {
+    const placements = Object.entries(router.placements);
+    $("chips").innerHTML = placements
+      .map(
+        ([model, p]) =>
+          `<div class="chip ${p.device}"><i>${esc(p.device.toUpperCase())}</i>${esc(model)}</div>`
+      )
+      .join("");
+    const npu = placements.filter(([, p]) => p.device === "npu").length;
+    $("mNpu").textContent = `${npu} / ${placements.length}`;
+  }
+  if (power) {
+    const mw = power.discharge_mw;
+    const text = mw ? (mw / 1000).toFixed(2) + " W" : power.on_ac ? "on AC" : "—";
+    $("mDraw").textContent = text;
+    $("cDraw").textContent = text;
+  }
+}
+
+/* -------------------------------------------------------------- demo replay */
+async function replayDemo() {
+  if (state.playing) return;
+  state.playing = true;
+  state.cancel = false;
+  $("btnDemo").disabled = true;
+  $("btnStop").disabled = false;
+
+  try {
+    const script = await api("/api/consult/demo/hypertension");
+    $("lang").value = script.patient_language;
+    await startVisit();
+    $("transcript").innerHTML = `<p class="empty">${esc(script.note)}</p>`;
+    state.suggested = script.teachback;
+
+    for (const turn of script.turns) {
+      if (state.cancel) break;
+      await addTurn(turn.speaker, turn.text);
+      await new Promise((r) => setTimeout(r, 1100));
+    }
+  } catch (err) {
+    alert("Demo failed: " + err.message);
+  } finally {
+    state.playing = false;
+    $("btnDemo").disabled = false;
+    $("btnStop").disabled = true;
+  }
+}
+
+/* ------------------------------------------------------------------- wiring */
+$("btnDemo").onclick = replayDemo;
+$("btnStop").onclick = () => { state.cancel = true; };
+$("btnTeach").onclick = () => runTeachback().catch((e) => alert(e.message));
+$("btnCard").onclick = () => showCard().catch((e) => alert(e.message));
+$("btnSay").onclick = submitTyped;
+$("say").addEventListener("keydown", (e) => { if (e.key === "Enter") submitTyped(); });
+$("lang").addEventListener("change", () => startVisit().then(() => {
+  $("transcript").innerHTML = `<p class="empty">New visit started.</p>`;
+  state.plan = []; state.glosses = {}; renderPlan(); renderGlossary();
+}));
+
+function submitTyped() {
+  const input = $("say");
+  const text = input.value;
+  input.value = "";
+  addTurn($("speaker").value, text).catch((e) => alert(e.message));
+}
+
+boot().catch((e) => alert("Could not reach the SETU service: " + e.message));
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+models/**/*.onnx
+models/**/*.bin
+models/**/*.gguf
+.setu_cache/
+setu.db
+bench_results/
+.pytest_cache/
+
+.claude/
+ui/node_modules/

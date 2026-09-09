@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "setu"
+version = "0.1.0"
+description = "Offline multilingual document + voice agent for Snapdragon-powered HP PCs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+    "numpy>=1.24",
+    "pillow>=10.0",
+    "pyyaml>=6.0",
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+# Installed on the Snapdragon target. onnxruntime-qnn is Windows-ARM64 only.
+snapdragon = [
+    "onnxruntime-qnn>=1.19",
+    "onnxruntime-genai>=0.4",
+]
+# Portable fallback so reviewers can run everything on any laptop.
+cpu = [
+    "onnxruntime>=1.17",
+]
+audio = [
+    "sounddevice>=0.4.6",
+    "soundfile>=0.12",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+setu = "setu.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
