@@ -54,8 +54,8 @@ class SessionCache:
         self.router = router
         self.model_root = Path(model_root)
         self._lock = threading.RLock()
-        self._sessions: dict[tuple[str, Device], _Session] = {}
-        self._missing: set[str] = set()
+        self._sessions: dict[tuple[str, str, Device], _Session] = {}
+        self._missing: set[tuple[str, str]] = set()
 
     # ---------------------------------------------------------------- building
 
@@ -110,20 +110,26 @@ class SessionCache:
         if placement.device is Device.STUB:
             return None
 
-        key = (model, placement.device)
+        # The filename is part of the identity, not a detail. Several models ship as two
+        # graphs under one key - Whisper is an encoder plus a decoder, so is the
+        # translator - and keying on the model alone silently hands back whichever half
+        # was built first. That surfaces far downstream as a missing-input error naming a
+        # tensor the caller never mentioned.
+        asset = filename or f"{model}.onnx"
+        key = (model, asset, placement.device)
         with self._lock:
             cached = self._sessions.get(key)
             if cached is not None:
                 cached.placement = placement
                 return cached
 
-            if model in self._missing:
+            if (model, asset) in self._missing:
                 return None
 
             path = self._resolve_path(model, filename)
             if path is None:
-                self._missing.add(model)
-                log.info("no ONNX asset for %r under %s - using stub", model, self.model_root)
+                self._missing.add((model, asset))
+                log.info("no ONNX asset %s/%s under %s - using stub", model, asset, self.model_root)
                 return None
 
             built = self._build(model, path, placement)
@@ -143,9 +149,9 @@ class SessionCache:
                         )
                         built = self._build(model, path, fallback)
                         if built is not None:
-                            self._sessions[(model, Device.CPU)] = built
+                            self._sessions[(model, asset, Device.CPU)] = built
                             return built
-                self._missing.add(model)
+                self._missing.add((model, asset))
                 return None
 
             self._sessions[key] = built
@@ -189,8 +195,8 @@ class SessionCache:
 
     def loaded(self) -> dict[str, str]:
         with self._lock:
-            return {m: d.value for (m, d) in self._sessions}
+            return {f"{m}/{asset}": d.value for (m, asset, d) in self._sessions}
 
     def missing(self) -> list[str]:
         with self._lock:
-            return sorted(self._missing)
+            return sorted(f"{m}/{asset}" for m, asset in self._missing)

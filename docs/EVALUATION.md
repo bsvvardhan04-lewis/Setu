@@ -6,7 +6,7 @@ is about speed. This one is about whether the product's central claim is true.
 - Cases: **10** labelled sessions across clinic, classroom and counter
 - Instructions extracted: **26**
 - Scoring method: `hybrid`
-- Generated: 2026-09-09 22:56:36
+- Generated: 2026-09-09 23:12:54
 
 ## The asymmetry
 

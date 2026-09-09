@@ -37,11 +37,13 @@ MODELS = REPO / "models"
 #: writes a compiled artefact we then move into place. Names on AI Hub are versioned,
 #: so `--list` prints them and any mismatch is reported rather than silently ignored.
 AIHUB_RECIPES: dict[str, dict] = {
-    "asr": {
+    "asr_aihub": {
         "module": "qai_hub_models.models.whisper_small_v2",
         "extra": "whisper_small_v2",
         "produces": ["asr_encoder.onnx", "asr_decoder.onnx"],
         "licence": "MIT (OpenAI Whisper)",
+        "note": "The Snapdragon-optimised export. Overwrites the portable ONNX in "
+        "models/asr/ with the AI Hub artefacts.",
     },
     "llm": {
         "module": "qai_hub_models.models.llama_v3_2_3b_chat_quantized",
@@ -58,6 +60,20 @@ HF_RECIPES: dict[str, dict] = {
         "repo": "onnx-community/silero-vad",
         "files": {"onnx/model.onnx": "vad.onnx"},
         "licence": "MIT",
+    },
+    "asr": {
+        "repo": "onnx-community/whisper-base",
+        "files": {
+            "onnx/encoder_model_int8.onnx": "asr_encoder.onnx",
+            "onnx/decoder_model_int8.onnx": "asr_decoder.onnx",
+            "tokenizer.json": "tokenizer.json",
+            "config.json": "config.json",
+            "generation_config.json": "generation_config.json",
+        },
+        "licence": "MIT (OpenAI Whisper)",
+        "note": "Multilingual base, INT8. The AI Hub export of whisper_small_v2 is the "
+        "Snapdragon target; this is the portable equivalent so the speech path is real "
+        "on any machine.",
     },
     "embed": {
         "repo": "sentence-transformers/all-MiniLM-L6-v2",
@@ -123,7 +139,7 @@ def fetch_hf(key: str, recipe: dict, force: bool) -> bool:
         _skip(f"{key}: {recipe.get('note', 'no direct download defined')}")
         return False
 
-    dest_dir = MODELS / key
+    dest_dir = MODELS / key.replace("_aihub", "")
     dest_dir.mkdir(parents=True, exist_ok=True)
     got_any = False
     for remote, local in recipe["files"].items():
@@ -144,7 +160,7 @@ def fetch_hf(key: str, recipe: dict, force: bool) -> bool:
 
 
 def fetch_aihub(key: str, recipe: dict, device: str, force: bool) -> bool:
-    dest_dir = MODELS / key
+    dest_dir = MODELS / key.replace("_aihub", "")
     if all((dest_dir / f).is_file() for f in recipe["produces"]) and not force:
         _skip(f"{key} already present")
         return True

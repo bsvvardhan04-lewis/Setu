@@ -54,6 +54,7 @@ def detect_script(text: str) -> tuple[str, float]:
 
 class LanguageId(Adapter):
     key = "lid"
+    needs_asset = False  # Unicode-script scan, no weights
     priority = Priority.INTERACTIVE
 
     def identify(self, text: str) -> Inference:
@@ -82,6 +83,7 @@ class Translator(Adapter):
     """
 
     key = "translate"
+    primary_asset = "translate_encoder.onnx"
     priority = Priority.INTERACTIVE
 
     def translate(self, text: str, src: str, tgt: str) -> Inference:

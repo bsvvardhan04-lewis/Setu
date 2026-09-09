@@ -47,6 +47,34 @@ Autoregressive decode needs a runtime that owns the KV cache and a pre-compiled 
 binary, which is what Genie provides. SETU talks to it behind the `LlmBackend` interface, so
 the same prompts run unchanged on llama.cpp on any reviewer's machine.
 
+### The portable Whisper, and what it costs
+
+`scripts/fetch_models.py --model asr` fetches **whisper-base multilingual INT8** from
+`onnx-community/whisper-base` instead. That is deliberate: it means the speech path is
+genuinely running on any reviewer's machine, not just architecturally ready for one.
+
+Verified round-trip on synthesised speech (`assets/sample_doctor.wav`, produced by Windows
+TTS so the fixture carries no third-party audio):
+
+> **spoken:** "Take the amlodipine tablet once at night. If you get chest pain, come
+> immediately to the emergency."
+> **transcribed:** "Take the amlo**typing** tablet once at night. If you get chest pain,
+> come immediately to the emergency."
+
+Everything clinically load-bearing survives — the timing, the red flag, the instruction —
+and **the drug name does not.** That is exactly the failure profile you would predict for
+a *base* model on domain-specific vocabulary, and it is the concrete argument for the
+larger `whisper_small_v2` AI Hub export on Snapdragon: the NPU is what makes affording the
+bigger model possible in a sustained, all-day workload.
+
+Three bugs in this path were invisible until real audio ran through it, and all three are
+now regression-tested in `tests/test_asr.py`:
+
+1. the mel spectrogram produced 2998 frames where the encoder demands exactly 3000
+2. the session cache keyed on model name alone, handing the decoder the encoder's session
+3. the filterbank used the HTK mel scale rather than Whisper's Slaney scale — which runs
+   without any error and transcribes noise
+
 ## Open source
 
 | Key | Model | Upstream | Licence | Precision |
