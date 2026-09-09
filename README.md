@@ -99,6 +99,33 @@ Realistic buyers today: private clinics in tier-2/3 cities, district hospitals, 
 and engineering colleges, NGO and CSR health programmes, and telemedicine providers — all
 of whom already buy PCs, and all of whom face the language gap daily.
 
+## Does it actually work?
+
+Every other measurement in this repo is about speed. This one asks whether the product's
+central claim is true — and it is the question most submissions never ask about themselves.
+
+`python scripts/run_eval.py --compare` runs the real pipeline over a labelled corpus of
+sessions ([`corpus.py`](src/setu/bench/corpus.py)) and reports how well the comprehension
+check separates a learner who understood from one who did not.
+
+| Metric | Result | Why it is the right metric |
+| --- | ---: | --- |
+| **Dangerous misses** | **0** | Said "understood" when they had not. The error that sends a patient home. |
+| Recall on missed items | **100%** | Of instructions truly not restated, how many we caught. |
+| Precision | 86.7% | Of what we flagged, how much was genuinely missed. |
+
+The two errors are not symmetric, so they are not averaged together. A false alarm costs a
+doctor five seconds of repetition. A dangerous miss costs a patient. **Thresholds were
+chosen at the operating point that keeps dangerous misses at zero, not the one that
+maximises F1** — at a lower threshold F1 is higher and one real miss slips through.
+
+The evaluation also **overturned a design decision.** Replacing keyword matching with
+sentence embeddings made the check *worse* (precision 81% → 76%): cosine scores an
+instruction against a restatement lower than expected, because an imperative and a
+first-person promise are grammatically asymmetric. The two signals failed on different
+items, so the shipped scorer unions them — **86.7%, better than either alone.** Full
+working: [`docs/EVALUATION.md`](docs/EVALUATION.md).
+
 ## Why this needs Snapdragon
 
 Three reasons, and only the third is a performance argument.

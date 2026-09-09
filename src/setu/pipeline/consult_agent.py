@@ -49,10 +49,14 @@ class Turn:
 
 @dataclass
 class CarePlanItem:
-    kind: str  # medication | test | followup | redflag | lifestyle
+    kind: str
     text: str
     source_turn: int
     confirmed: bool = False
+    #: how strongly the learner's restatement matched this item, 0..1 (best of the two)
+    similarity: float | None = None
+    lexical: float | None = None
+    semantic: float | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -60,6 +64,9 @@ class CarePlanItem:
             "text": self.text,
             "source_turn": self.source_turn,
             "confirmed": self.confirmed,
+            "similarity": self.similarity,
+            "lexical": self.lexical,
+            "semantic": self.semantic,
         }
 
 
@@ -303,6 +310,68 @@ class ConsultAgent:
         # Ordered by the domain's own consequence ordering, not dict insertion order.
         return [prompts[k] for k in session.domain.kinds if k in present and k in prompts]
 
+    def _score_coverage(self, session: ConsultSession, bridged: str, said: set[str]) -> str:
+        """Decide which plan items the learner actually covered.
+
+        Two independent signals, unioned. Neither is sufficient alone, and the evaluation
+        corpus is what proved it rather than intuition:
+
+        * **Lexical overlap** catches restatements that reuse the instruction's own words.
+          It misses paraphrase entirely - "swallow one pill each evening" shares nothing
+          with "amlodipine 5 mg one at night".
+        * **Sentence-embedding cosine** catches paraphrase, but scores instruction against
+          restatement lower than expected because the two are grammatically asymmetric
+          (an imperative against a first-person promise). Measured on the corpus, truly
+          covered items ran 0.34-0.99 and truly missed items 0.01-0.54 - overlapping
+          ranges, so no cosine threshold separates them cleanly on its own.
+
+        An item counts as covered if EITHER signal clears its threshold. Thresholds were
+        chosen from a sweep over the labelled corpus, at the operating point that keeps
+        DANGEROUS misses (telling a doctor the patient understood when they did not) at
+        zero - see `docs/EVALUATION.md`. Precision is deliberately sacrificed for that:
+        a needless repetition costs seconds, a missed red flag costs more.
+        """
+        sentences = [
+            part.strip()
+            for part in re.split(r"(?<=[.!?]) +|[\n,]", bridged)
+            if part.strip()
+        ]
+        if not sentences or not session.plan:
+            for item in session.plan:
+                item.confirmed = False
+            return "none"
+
+        # --- signal 1: lexical overlap
+        lexical: list[float] = []
+        for item in session.plan:
+            terms = {w.lower() for w in re.findall(r"\w{4,}", item.text, re.UNICODE)}
+            keyed = terms - _STOPWORDS
+            lexical.append(len(keyed & said) / len(keyed) if keyed else 0.0)
+
+        # --- signal 2: semantic similarity, when real embeddings are loaded
+        semantic: list[float] | None = None
+        encoded = self.engine.embed.encode([p.text for p in session.plan] + sentences)
+        if not encoded.degraded:
+            import numpy as np
+
+            vectors = np.asarray(encoded.value, dtype=np.float32)
+            norms = np.clip(np.linalg.norm(vectors, axis=1, keepdims=True), 1e-9, None)
+            unit = vectors / norms
+            similarity = unit[: len(session.plan)] @ unit[len(session.plan) :].T
+            semantic = similarity.max(axis=1).tolist()
+
+        for index, item in enumerate(session.plan):
+            lex = lexical[index]
+            sem = semantic[index] if semantic else None
+            item.confirmed = lex >= LEXICAL_THRESHOLD or (
+                sem is not None and sem >= SEMANTIC_THRESHOLD
+            )
+            item.similarity = round(max(lex, sem or 0.0), 3)
+            item.lexical = round(lex, 3)
+            item.semantic = None if sem is None else round(float(sem), 3)
+
+        return "hybrid" if semantic else "lexical"
+
     def check_teachback(self, session_id: str, restatement: str) -> dict:
         """Score what the patient said back against the recorded plan.
 
@@ -346,11 +415,7 @@ class ConsultAgent:
                 "needs_repeat": [],
             }
 
-        for item in session.plan:
-            terms = {w.lower() for w in re.findall(r"\w{4,}", item.text, re.UNICODE)}
-            keyed = terms - _STOPWORDS
-            overlap = len(keyed & said) / len(keyed) if keyed else 0.0
-            item.confirmed = overlap >= 0.34
+        method = self._score_coverage(session, bridged, said)
 
         if session.plan:
             generated = self.engine.llm.generate(
@@ -376,10 +441,16 @@ class ConsultAgent:
             "total": len(session.plan),
             "unverified": False,
             "cross_lingual": cross_lingual,
+            "method": method,
             "missed": [p.as_dict() for p in missed],
             "needs_repeat": [p.text for p in missed if p.kind in session.domain.critical],
         }
 
+
+#: Chosen by sweeping the labelled corpus at the operating point that keeps dangerous
+#: misses at zero. See docs/EVALUATION.md for the full sweep.
+LEXICAL_THRESHOLD = 0.34
+SEMANTIC_THRESHOLD = 0.54
 
 _STOPWORDS = {
     "will", "must", "should", "this", "that", "your", "with", "from", "have", "take",
