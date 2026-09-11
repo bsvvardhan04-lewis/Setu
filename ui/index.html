@@ -151,6 +151,11 @@
     border: 1px solid var(--line); border-radius: 7px; background: var(--card);
   }
   input[type=text] { flex: 1; min-width: 120px; }
+  button.recording {
+    background: var(--danger); border-color: var(--danger); color: #fff;
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { filter: brightness(1.25); } }
 
   /* ------------------------------------------------------------ compute bar */
   .compute {
@@ -215,6 +220,7 @@
         </select>
         <input type="text" id="say" placeholder="Type what was said, then press Enter" />
         <button id="btnSay">Add</button>
+        <button id="btnMic" title="Hold to speak, release to transcribe">&#127908; Hold to speak</button>
       </div>
     </section>
   </div>
@@ -578,12 +584,135 @@ async function replayDemo() {
   }
 }
 
+/* ------------------------------------------------------------------ microphone */
+/* Raw PCM capture rather than MediaRecorder: MediaRecorder hands back webm/opus, which
+   the server would then have to decode, and pulling an audio codec into an offline app
+   to move sound 200 metres to localhost is absurd. We capture Float32, resample to the
+   16 kHz Whisper expects, and write the WAV header ourselves. */
+const mic = { ctx: null, stream: null, node: null, chunks: [], rate: 0, active: false };
+const MIC_IDLE = "\u{1F3A4} Hold to speak";
+
+async function startRecording() {
+  if (mic.active) return;
+  mic.stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+  });
+  mic.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  mic.rate = mic.ctx.sampleRate;
+  mic.chunks = [];
+  const source = mic.ctx.createMediaStreamSource(mic.stream);
+  mic.node = mic.ctx.createScriptProcessor(4096, 1, 1);
+  mic.node.onaudioprocess = (e) => {
+    mic.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  };
+  source.connect(mic.node);
+  mic.node.connect(mic.ctx.destination);
+  mic.active = true;
+  $("btnMic").classList.add("recording");
+  $("btnMic").textContent = "\u25CF Listening\u2026";
+}
+
+async function stopRecording() {
+  if (!mic.active) return;
+  mic.active = false;
+  $("btnMic").classList.remove("recording");
+  $("btnMic").textContent = "\u{1F3A4} Transcribing\u2026";
+  $("btnMic").disabled = true;
+
+  try {
+    mic.node.disconnect();
+    mic.stream.getTracks().forEach((t) => t.stop());
+    const raw = flatten(mic.chunks);
+    await mic.ctx.close();
+
+    if (raw.length < mic.rate * 0.4) {
+      alert("Too short - hold the button down while speaking.");
+      return;
+    }
+    const wav = encodeWav(resample(raw, mic.rate, 16000), 16000);
+    const form = new FormData();
+    form.append("audio", wav, "speech.wav");
+    // Whisper is steered by the language token seeded into its decoder. The expert
+    // speaks the clinic's working language; the learner speaks their own.
+    const speaker = $("speaker").value;
+    const isExpert = state.domain && speaker === state.domain.expert;
+    form.append("language", isExpert ? "en" : $("lang").value);
+
+    const result = await api("/api/transcribe", { method: "POST", body: form });
+    if (result.degraded || !result.text) {
+      alert("No transcript. Whisper assets may be missing - run: python scripts/fetch_models.py --model asr");
+      return;
+    }
+    await addTurn($("speaker").value, result.text);
+  } catch (err) {
+    alert("Microphone failed: " + err.message);
+  } finally {
+    $("btnMic").disabled = false;
+    $("btnMic").textContent = MIC_IDLE;
+  }
+}
+
+function flatten(chunks) {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Float32Array(total);
+  let at = 0;
+  for (const c of chunks) { out.set(c, at); at += c.length; }
+  return out;
+}
+
+/* Linear resample. Browsers record at 44.1 or 48 kHz; Whisper wants 16 kHz, and handing
+   it the wrong rate transcribes gibberish without raising anything. */
+function resample(input, from, to) {
+  if (from === to) return input;
+  const ratio = from / to;
+  const out = new Float32Array(Math.floor(input.length / ratio));
+  for (let i = 0; i < out.length; i++) {
+    const at = i * ratio;
+    const lo = Math.floor(at);
+    const hi = Math.min(lo + 1, input.length - 1);
+    out[i] = input[lo] + (input[hi] - input[lo]) * (at - lo);
+  }
+  return out;
+}
+
+function encodeWav(samples, rate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const str = (at, text) => {
+    for (let i = 0; i < text.length; i++) view.setUint8(at + i, text.charCodeAt(i));
+  };
+  str(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  str(8, "WAVEfmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);         // PCM
+  view.setUint16(22, 1, true);         // mono
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);  // byte rate
+  view.setUint16(32, 2, true);         // block align
+  view.setUint16(34, 16, true);        // bits per sample
+  str(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const clamped = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * 2, clamped * 32767, true);
+  }
+  return new Blob([view], { type: "audio/wav" });
+}
+
 /* ------------------------------------------------------------------- wiring */
 $("btnDemo").onclick = replayDemo;
 $("btnStop").onclick = () => { state.cancel = true; };
 $("btnTeach").onclick = () => runTeachback().catch((e) => alert(e.message));
 $("btnCard").onclick = () => showCard().catch((e) => alert(e.message));
 $("btnSay").onclick = submitTyped;
+$("btnMic").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  startRecording().catch((err) => alert("Microphone unavailable: " + err.message));
+});
+for (const evt of ["pointerup", "pointerleave", "pointercancel"]) {
+  $("btnMic").addEventListener(evt, () => stopRecording());
+}
 $("say").addEventListener("keydown", (e) => { if (e.key === "Enter") submitTyped(); });
 $("lang").addEventListener("change", resetSession);
 $("domain").addEventListener("change", () => {

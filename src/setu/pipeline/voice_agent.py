@@ -67,8 +67,9 @@ class GateStats:
 
 
 class VoiceAgent:
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, language: str | None = "en") -> None:
         self.engine = engine
+        self.language = language
         self.stats = GateStats()
         self._buffer: list[np.ndarray] = []
         self._silence_run = 0
@@ -107,11 +108,18 @@ class VoiceAgent:
             return None
         audio = np.concatenate(self._buffer)
         self.reset()
-        return self.transcribe(audio)
+        return self.transcribe(audio, language=self.language)
 
-    def transcribe(self, audio: np.ndarray) -> Utterance:
+    def transcribe(self, audio: np.ndarray, language: str | None = None) -> Utterance:
+        """Transcribe one utterance.
+
+        Passing the language matters more than it looks: Whisper is steered by the
+        token seeded into its decoder, and leaving it to auto-detect measurably changes
+        the output on the same audio. In a clinic the expert's language is known, so
+        say so rather than making the model guess.
+        """
         started = time.perf_counter()
-        recognised = self.engine.asr.transcribe(audio)
+        recognised = self.engine.asr.transcribe(audio, language=language)
         self.stats.asr_ms_total += recognised.latency_ms
         self.stats.utterances += 1
 

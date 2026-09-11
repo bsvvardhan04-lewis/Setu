@@ -10,6 +10,7 @@ import numpy as np
 from ..config import SUPPORTED_LANGUAGES
 from ..runtime import Priority
 from .base import Adapter, Inference
+from .translate_seq2seq import TARGET_CODES, MarianCodec, greedy_translate
 
 #: Unicode block -> language, used by the script-based identifier. Several languages share
 #: a script (Hindi and Marathi are both Devanagari), so this narrows rather than decides;
@@ -74,49 +75,55 @@ class LanguageId(Adapter):
 
 
 class Translator(Adapter):
-    """IndicTrans2 distilled.
+    """OPUS-MT multilingual, covering every shipped target language in one 111 MB model.
 
-    A 200M specialist beats asking the 3B chat model to translate: lower latency, lower
-    power, and far more faithful on official register (a bank notice is not conversational
-    Hindi). When the specialist is absent we return the source and say so, rather than
-    silently shipping untranslated text as if it were translated.
+    A specialist beats asking the 3B chat model to translate: lower latency, far lower
+    power, and more faithful on official and clinical register. A discharge summary is
+    not conversational Hindi, and a general chat model tends to smooth it into something
+    friendlier and less exact. For a care plan, exactness is the product.
+
+    When the assets are absent the source text comes back marked `degraded`, and the UI
+    says so. Returning untranslated text as though it were translated would be the single
+    most dangerous silent failure in this project.
     """
 
     key = "translate"
     primary_asset = "translate_encoder.onnx"
     priority = Priority.INTERACTIVE
 
+    def __init__(self, cache) -> None:
+        super().__init__(cache)
+        self._codec = MarianCodec(cache.model_root / self.key)
+
+    def supported(self, code: str) -> bool:
+        return code in TARGET_CODES
+
     def translate(self, text: str, src: str, tgt: str) -> Inference:
         start = time.perf_counter()
-        if src == tgt or not text.strip():
+        if not text.strip() or src == tgt:
             return Inference(
                 text, self.key, "none", 0.0, extra={"src": src, "tgt": tgt, "noop": True}
             )
 
-        tokens = np.array([[ord(c) % 32000 for c in text[:512]]], dtype=np.int64)
-        encoded = self.cache.run(
-            self.key,
-            {"input_ids": tokens, "attention_mask": np.ones_like(tokens)},
-            filename="translate_encoder.onnx",
-            priority=self.priority,
-        )
-        if encoded is not None:
-            decoded = self.cache.run(
-                self.key,
-                {"encoder_hidden_states": np.asarray(encoded.outputs[0])},
-                filename="translate_decoder.onnx",
-                priority=self.priority,
+        # "auto" reaches us from the teach-back path, which knows the text is not English
+        # but not which language it is. Script detection is enough to pick an NLLB code.
+        if src == "auto":
+            src = detect_script(text)[0]
+
+        if self.supported(src) and self.supported(tgt):
+            result = greedy_translate(
+                self.cache, self._codec, text, src, tgt, self.priority
             )
-            if decoded is not None:
-                return Inference(
-                    _decode_sentencepiece(
-                        np.asarray(decoded.outputs[0]), self.cache.model_root / self.key
-                    ),
-                    self.key,
-                    encoded.device.value,
-                    encoded.latency_ms + decoded.latency_ms,
-                    extra={"src": src, "tgt": tgt},
-                )
+            if result is not None:
+                translated, device, latency = result
+                if translated:
+                    return Inference(
+                        translated,
+                        self.key,
+                        device,
+                        latency,
+                        extra={"src": src, "tgt": tgt, "model": "opus-mt-en-mul"},
+                    )
 
         return Inference(
             text,
@@ -127,16 +134,6 @@ class Translator(Adapter):
             extra={
                 "src": src,
                 "tgt": tgt,
-                "note": "IndicTrans2 absent - text returned untranslated, routed to the LLM instead",
+                "note": "translation model not loaded - showing the source text unchanged",
             },
         )
-
-
-def _decode_sentencepiece(ids: np.ndarray, model_dir) -> str:
-    try:
-        import sentencepiece as spm
-
-        sp = spm.SentencePieceProcessor(model_file=str(model_dir / "spm.model"))
-        return sp.decode([int(i) for i in ids.reshape(-1).tolist() if int(i) > 2])
-    except Exception:
-        return ""

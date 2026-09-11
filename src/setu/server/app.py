@@ -124,10 +124,12 @@ def ask(request: AskRequest) -> dict:
 
 
 @app.post("/api/transcribe")
-async def transcribe(audio: UploadFile = File(...)) -> dict:
+async def transcribe(
+    audio: UploadFile = File(...), language: str = Form("en")
+) -> dict:
     raw = await audio.read()
     samples = _decode_wav(raw)
-    return voice_agent.transcribe(samples).as_dict()
+    return voice_agent.transcribe(samples, language=language or None).as_dict()
 
 
 def _decode_wav(raw: bytes) -> np.ndarray:

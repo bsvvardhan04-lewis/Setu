@@ -84,10 +84,18 @@ HF_RECIPES: dict[str, dict] = {
         "licence": "Apache-2.0",
     },
     "translate": {
-        "repo": "ai4bharat/indictrans2-en-indic-dist-200M",
-        "files": {},
-        "licence": "MIT",
-        "note": "Needs an ONNX export step; see docs/MODELS.md. Placeholder entry.",
+        "repo": "Xenova/opus-mt-en-mul",
+        "files": {
+            "onnx/encoder_model_quantized.onnx": "translate_encoder.onnx",
+            "onnx/decoder_model_quantized.onnx": "translate_decoder.onnx",
+            "tokenizer.json": "tokenizer.json",
+            "config.json": "config.json",
+            "generation_config.json": "generation_config.json",
+        },
+        "licence": "Apache-2.0 (Helsinki-NLP OPUS-MT)",
+        "note": "One 111 MB model covering every shipped target language. NLLB-200 and "
+        "IndicTrans2 are higher quality and documented in docs/MODELS.md as the upgrade "
+        "path; this one is small enough that the translation path is genuinely running.",
     },
     "tts": {
         "repo": "rhasspy/piper-voices",

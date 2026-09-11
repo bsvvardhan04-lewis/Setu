@@ -125,16 +125,17 @@ CATALOGUE: dict[str, ModelCard] = {
     ),
     "translate": ModelCard(
         key="translate",
-        display="IndicTrans2 (distilled)",
+        display="OPUS-MT en-mul",
         source="open-source",
-        upstream="ai4bharat/indictrans2-en-indic-dist-200M",
-        licence="MIT",
+        upstream="Xenova/opus-mt-en-mul (Helsinki-NLP)",
+        licence="Apache-2.0",
         precision="int8",
         runtime="onnx",
-        files=("translate_encoder.onnx", "translate_decoder.onnx", "spm.model"),
-        notes="Specialist translator for the 12 shipped languages. The LLM can translate "
-        "too, but a 200M distilled specialist is far cheaper per page and more faithful "
-        "on official register.",
+        files=("translate_encoder.onnx", "translate_decoder.onnx", "tokenizer.json"),
+        notes="One 111 MB model covering every shipped target language. A distilled "
+        "specialist is far cheaper per turn than asking the 3B chat model and more "
+        "faithful on clinical register. NLLB-200 and IndicTrans2 are the quality upgrade "
+        "path and are documented in docs/MODELS.md.",
         languages=tuple("en hi te ta bn mr kn ml gu pa or ur".split()),
     ),
     "llm": ModelCard(
