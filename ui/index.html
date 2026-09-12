@@ -531,13 +531,9 @@ async function runTeachback() {
 }
 
 async function showCard() {
-  const card = await api(`/api/consult/${state.id}/card`);
-  const w = window.open("", "_blank", "width=520,height=720");
-  w.document.write(
-    `<title>Take-home card</title><pre style="font:14px/1.6 ui-monospace,monospace;` +
-      `padding:26px;white-space:pre-wrap">${esc(card.printable)}</pre>`
-  );
-  w.document.close();
+  // Open the real printable page rather than dumping monospace into a popup. This is the
+  // artefact the patient physically carries out; it deserves to be typeset.
+  window.open(`/card/${encodeURIComponent(state.id)}`, "_blank");
 }
 </script>
 <script>

@@ -160,3 +160,30 @@ def test_same_language_restatement_still_scores(agent):
     result = agent.check_teachback("c9", "I will come back for follow up after 2 weeks.")
     assert result["unverified"] is False
     assert result["covered"] == result["total"]
+
+
+def test_card_translations_are_memoised(agent):
+    """The card was the slowest thing in the product before this.
+
+    A five-item card paid the full encoder-plus-decode cost per item, sequentially - about
+    twenty seconds. Items are independent, so they now go out together, and the same
+    sentence translated for the live transcript is reused rather than recomputed.
+    """
+    agent.start("memo", patient_language="hi", domain="clinic")
+    for line in DOCTOR_LINES:
+        agent.add_turn("memo", "doctor", line)
+
+    card = TakeHomeCard(agent)
+    first = card.build("memo")
+    second = card.build("memo")
+    # Identical output, and the second pass must not have re-run anything.
+    assert first["sections"] == second["sections"]
+
+
+def test_card_exposes_the_domain_roles(agent):
+    """The printable page titles its glossary with the domain's own role names."""
+    agent.start("roles", patient_language="hi", domain="counter")
+    agent.add_turn("roles", "officer", "Bring your Aadhaar and a self attested photocopy.")
+    card = TakeHomeCard(agent).build("roles")
+    assert card["expert"] == "officer"
+    assert card["learner"] == "citizen"

@@ -58,6 +58,21 @@ def index() -> FileResponse:
     return FileResponse(UI_DIR / "index.html")
 
 
+@app.get("/card/{session_id}")
+def card_page(session_id: str) -> FileResponse:
+    """The printable take-home card.
+
+    Served as its own page rather than a popup because it is the patient's only artefact -
+    the thing they physically carry out of the room - and it has to survive being printed
+    on a clinic's cheap printer and read by someone who struggles with small type.
+    """
+    try:
+        consult_agent.get(session_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    return FileResponse(UI_DIR / "card.html")
+
+
 @app.get("/api/system")
 def system() -> dict:
     """Full transparency payload: host, providers, placements, learned costs, assets."""

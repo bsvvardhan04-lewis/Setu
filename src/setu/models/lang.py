@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 import unicodedata
 
@@ -99,6 +100,11 @@ class Translator(Adapter):
 
     def __init__(self, cache) -> None:
         super().__init__(cache)
+        # A consultation repeats itself: the same instruction is translated for the live
+        # transcript and again for the take-home card. Memoising makes the second one
+        # free, which is most of why re-opening a card is instant.
+        self._memo: dict[tuple[str, str], Inference] = {}
+        self._memo_lock = threading.Lock()
         # The multilingual checkpoint, plus one bilingual checkpoint per language it
         # cannot actually handle. Built lazily so an absent dedicated model costs nothing.
         self._codecs: dict[str, MarianCodec] = {
@@ -129,6 +135,12 @@ class Translator(Adapter):
         if src == "auto":
             src = detect_script(text)[0]
 
+        key = (text, tgt)
+        with self._memo_lock:
+            cached = self._memo.get(key)
+        if cached is not None:
+            return cached
+
         # Every checkpoint SETU ships translates FROM English. The source therefore has
         # to be English, and only the TARGET is looked up in the supported set - asking
         # whether the source is a supported target is a different question with the same
@@ -141,13 +153,16 @@ class Translator(Adapter):
             if result is not None:
                 translated, device, latency = result
                 if translated:
-                    return Inference(
+                    inference = Inference(
                         translated,
                         self.key,
                         device,
                         latency,
                         extra={"src": src, "tgt": tgt, "checkpoint": model_key},
                     )
+                    with self._memo_lock:
+                        self._memo[key] = inference
+                    return inference
 
         return Inference(
             text,

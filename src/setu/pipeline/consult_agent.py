@@ -468,6 +468,26 @@ class TakeHomeCard:
     def __init__(self, agent: ConsultAgent) -> None:
         self.agent = agent
 
+    def _translate_all(self, items, target: str):
+        """Translate a section's items concurrently.
+
+        Sequentially this was the slowest thing in the product - a five-item card took
+        about twenty seconds, because every item pays the full encoder-plus-decode cost in
+        turn. They are independent, and ONNX Runtime sessions are safe to call from
+        several threads, so they go out together and the card costs roughly one
+        translation instead of N.
+        """
+        if not items:
+            return []
+        if len(items) == 1:
+            return [self.agent.engine.translate.translate(items[0].text, "en", target)]
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        translate = self.agent.engine.translate.translate
+        with ThreadPoolExecutor(max_workers=min(4, len(items))) as pool:
+            return list(pool.map(lambda i: translate(i.text, "en", target), items))
+
     def build(self, session_id: str) -> dict:
         session = self.agent.get(session_id)
         domain = session.domain
@@ -479,17 +499,15 @@ class TakeHomeCard:
             items = [p for p in session.plan if p.kind == kind]
             if not items:
                 continue
-            lines = []
-            for item in items:
-                translated = self.agent.engine.translate.translate(item.text, "en", target)
-                lines.append(
-                    {
-                        "source": item.text,
-                        "translated": translated.value,
-                        "translated_ok": not translated.degraded,
-                        "confirmed": item.confirmed,
-                    }
-                )
+            lines = [
+                {
+                    "source": item.text,
+                    "translated": translated.value,
+                    "translated_ok": not translated.degraded,
+                    "confirmed": item.confirmed,
+                }
+                for item, translated in zip(items, self._translate_all(items, target))
+            ]
             sections.append({"kind": kind, "heading": domain.heading(kind), "items": lines})
 
         glossary = [
@@ -500,6 +518,8 @@ class TakeHomeCard:
         return {
             "session_id": session_id,
             "domain": domain.key,
+            "expert": domain.expert,
+            "learner": domain.learner,
             "title": domain.card_title,
             "language": target,
             "language_name": SUPPORTED_LANGUAGES.get(target, target),

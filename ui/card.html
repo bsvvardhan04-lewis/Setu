@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Your visit summary — SETU</title>
+<style>
+  /* The patient's only artefact. Designed to be printed on a clinic's cheap printer and
+     read by someone who struggles with small type, so: large body text, high contrast,
+     no colour required to understand it, and an order that puts the dangerous thing at
+     the top rather than wherever it happened to be said. */
+  :root {
+    --ink: #10151c;
+    --muted: #4a5560;
+    --line: #c9d1d9;
+    --danger: #a01008;
+    --danger-bg: #fdecea;
+    --accent: #0b5f54;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 22px 60px;
+    background: #eef1f4;
+    color: var(--ink);
+    font: 19px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .sheet {
+    max-width: 780px; margin: 0 auto; background: #fff;
+    padding: 38px 42px 46px; border-radius: 6px;
+    box-shadow: 0 2px 14px rgba(16,21,28,.10);
+  }
+
+  header { border-bottom: 3px solid var(--ink); padding-bottom: 16px; margin-bottom: 26px; }
+  h1 { margin: 0 0 4px; font-size: 30px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 16px; }
+
+  section { margin-bottom: 26px; page-break-inside: avoid; }
+  h2 {
+    margin: 0 0 12px; font-size: 15px; font-weight: 800;
+    letter-spacing: .09em; text-transform: uppercase; color: var(--muted);
+  }
+  section.urgent h2 { color: var(--danger); }
+
+  .item {
+    padding: 13px 16px; margin-bottom: 9px;
+    border: 2px solid var(--line); border-radius: 6px;
+    font-size: 20px; line-height: 1.5;
+  }
+  section.urgent .item {
+    border-color: var(--danger); background: var(--danger-bg); color: var(--danger);
+    font-weight: 600;
+  }
+  .item .source {
+    display: block; margin-top: 7px; font-size: 15px; color: var(--muted);
+    font-weight: 400;
+  }
+  section.urgent .item .source { color: var(--danger); opacity: .85; }
+
+  .words { border-top: 2px solid var(--line); padding-top: 18px; }
+  .word { margin-bottom: 11px; font-size: 17px; }
+  .word b { display: inline-block; min-width: 150px; }
+  .word span { color: var(--muted); }
+
+  .ask {
+    border: 3px dashed var(--danger); border-radius: 6px;
+    padding: 16px 18px; background: #fff;
+  }
+  .ask h2 { color: var(--danger); }
+  .ask li { font-size: 18px; margin-bottom: 7px; }
+
+  footer {
+    margin-top: 30px; padding-top: 16px; border-top: 2px solid var(--line);
+    font-size: 14px; color: var(--muted);
+  }
+
+  .toolbar {
+    max-width: 780px; margin: 0 auto 16px; display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  button {
+    font: inherit; font-size: 16px; font-weight: 600; padding: 11px 20px;
+    border-radius: 7px; border: 2px solid var(--ink); background: #fff;
+    color: var(--ink); cursor: pointer;
+  }
+  button.primary { background: var(--ink); color: #fff; }
+  button:hover { filter: brightness(1.08); }
+
+  .empty { color: var(--muted); font-size: 17px; }
+
+  @media print {
+    body { background: #fff; padding: 0; font-size: 17px; }
+    .sheet { box-shadow: none; max-width: none; padding: 0; border-radius: 0; }
+    .toolbar { display: none; }
+    .item { border-width: 1.5px; }
+    section.urgent .item { background: #fff; }  /* ink-saving, border still carries it */
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button class="primary" id="btnPrint">Print this card</button>
+  <button id="btnSpeak">Read it aloud</button>
+  <button id="btnBack">Back to the visit</button>
+</div>
+
+<div class="sheet" id="sheet">
+  <p class="empty">Loading…</p>
+</div>
+
+<script>
+"use strict";
+const sessionId = location.pathname.split("/").pop();
+const esc = (s) =>
+  String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+let spokenText = "";
+
+async function load() {
+  const res = await fetch(`/api/consult/${sessionId}/card`);
+  if (!res.ok) {
+    document.getElementById("sheet").innerHTML =
+      `<p class="empty">That visit could not be found.</p>`;
+    return;
+  }
+  render(await res.json());
+}
+
+function render(card) {
+  const urgent = new Set(["redflag", "deadline", "exam"]);
+  const parts = [];
+  const spoken = [];
+
+  parts.push(`<header>
+      <h1>${esc(card.title || "Your visit summary")}</h1>
+      <div class="sub">${esc(card.language_name || "")} &middot; prepared on this device, nothing was sent anywhere</div>
+    </header>`);
+
+  for (const section of card.sections || []) {
+    const isUrgent = urgent.has(section.kind);
+    spoken.push(section.heading + ".");
+    const items = section.items
+      .map((item) => {
+        const main = item.translated_ok && item.translated ? item.translated : item.source;
+        spoken.push(main);
+        // Keep the original alongside the translation: a family member or pharmacist may
+        // read English even when the patient does not.
+        const original =
+          item.translated_ok && item.translated && item.translated !== item.source
+            ? `<span class="source">${esc(item.source)}</span>`
+            : "";
+        return `<div class="item">${esc(main)}${original}</div>`;
+      })
+      .join("");
+    parts.push(
+      `<section class="${isUrgent ? "urgent" : ""}">
+         <h2>${esc(section.heading)}</h2>${items}
+       </section>`
+    );
+  }
+
+  if (!card.sections || !card.sections.length) {
+    parts.push(`<p class="empty">No instructions were recorded in this visit.</p>`);
+  }
+
+  if ((card.glossary || []).length) {
+    parts.push(
+      `<section class="words"><h2>Words the ${esc(card.expert || "doctor")} used</h2>` +
+        card.glossary
+          .map((g) => {
+            spoken.push(`${g.term} means ${g.plain}.`);
+            return `<div class="word"><b>${esc(g.term)}</b> <span>${esc(g.plain)}</span></div>`;
+          })
+          .join("") +
+        `</section>`
+    );
+  }
+
+  if ((card.unconfirmed || []).length) {
+    parts.push(
+      `<section class="ask"><h2>Ask before you leave</h2><ul>` +
+        card.unconfirmed.map((t) => `<li>${esc(t)}</li>`).join("") +
+        `</ul></section>`
+    );
+  }
+
+  parts.push(
+    `<footer>Prepared by SETU on this computer. Nothing from this visit was sent over a
+     network. This card records what was said — it is not medical advice on its own.</footer>`
+  );
+
+  document.getElementById("sheet").innerHTML = parts.join("");
+  spokenText = spoken.join(" ");
+  document.title = (card.title || "Visit summary") + " — SETU";
+}
+
+/* Read-aloud uses the browser's own synthesiser, which is on-device. It is the fallback
+   SETU already uses when the Piper voice cannot be driven correctly, and here it is the
+   right tool anyway: this is the patient's card, on the patient's terms. */
+document.getElementById("btnSpeak").onclick = () => {
+  if (!("speechSynthesis" in window)) {
+    alert("This browser cannot read text aloud.");
+    return;
+  }
+  speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(spokenText);
+  utterance.rate = 0.85;
+  speechSynthesis.speak(utterance);
+};
+document.getElementById("btnPrint").onclick = () => window.print();
+document.getElementById("btnBack").onclick = () => (location.href = "/");
+
+load();
+</script>
+</body>
+</html>

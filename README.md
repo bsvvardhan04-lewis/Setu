@@ -43,7 +43,7 @@ A laptop sits on the doctor's desk and listens to the whole consultation. With t
 | **Flag jargon** | "od", "fasting", "lipid profile", "chronic" — caught as spoken, glossed in plain words the doctor can read aloud. |
 | **Build the plan** | Instructions are extracted as they are given: medicines, tests, follow-up, red flags, lifestyle. |
 | **Teach back** | The patient is asked to repeat the plan in their own words. SETU checks it against what was actually said. |
-| **Take-home card** | Printed, in their language, ordered by what will hurt them if they forget it. |
+| **Take-home card** | A printable page at `/card/<visit>` — large type, high contrast, red flags first, with a read-aloud button. The patient's only artefact, so it is typeset rather than dumped as text. |
 
 The moment that matters is the fifth one:
 
