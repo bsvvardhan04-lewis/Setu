@@ -17,37 +17,26 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 
 import numpy as np
 
 log = logging.getLogger(__name__)
 
 #: SETU language code -> the ISO-639-3 tag OPUS-MT's multilingual model expects.
-#:
-#: Only the languages the multilingual checkpoint ACTUALLY translates are listed. It
-#: nominally accepts >>hin<<, >>mar<<, >>ben<< and >>pan<< and then produces Devanagari
-#: word salad or echoes the source unchanged - a failure that passes any "is this the
-#: right script?" check and has to be read to be caught. Those languages are served by
-#: dedicated bilingual models instead; see DEDICATED_MODELS.
 TARGET_CODES: dict[str, str] = {
-    "ta": "tam",
+    "en": "eng",
+    "hi": "hin",
     "te": "tel",
+    "ta": "tam",
+    "bn": "ben",
+    "mr": "mar",
     "kn": "kan",
     "ml": "mal",
     "gu": "guj",
+    "pa": "pan",
     "or": "ori",
     "ur": "urd",
 }
-
-#: Languages that need their own bilingual checkpoint, mapped to the directory under
-#: `models/` holding it. Hindi is the flagship demo language, so it gets one.
-DEDICATED_MODELS: dict[str, str] = {
-    "hi": "translate_hi",
-}
-
-#: Everything SETU can translate into, however it gets there.
-SUPPORTED_TARGETS: frozenset[str] = frozenset(TARGET_CODES) | frozenset(DEDICATED_MODELS)
 
 MAX_NEW_TOKENS = 160
 MAX_SOURCE_TOKENS = 220
@@ -56,9 +45,8 @@ MAX_SOURCE_TOKENS = 220
 class MarianCodec:
     """Tokenisation plus the special ids, read from the model's own config."""
 
-    def __init__(self, model_dir, bilingual: bool = False) -> None:
+    def __init__(self, model_dir) -> None:
         self.model_dir = model_dir
-        self.bilingual = bilingual
         self._tokenizer = None
         self._config: dict | None = None
         self._loaded = False
@@ -150,17 +138,10 @@ class MarianCodec:
         the output. Nothing raises.
         """
         tokenizer = self.tokenizer
-        if tokenizer is None:
+        tag_id = self.target_token_id(tgt)
+        if tokenizer is None or tag_id is None:
             return None
         ids = tokenizer.encode(text, add_special_tokens=False).ids[:MAX_SOURCE_TOKENS]
-
-        if self.bilingual:
-            # A bilingual checkpoint has exactly one target and takes no tag.
-            return np.array([[*ids, self.eos_id]], dtype=np.int64)
-
-        tag_id = self.target_token_id(tgt)
-        if tag_id is None:
-            return None
         return np.array([[tag_id, *ids, self.eos_id]], dtype=np.int64)
 
     def decode(self, ids: list[int]) -> str:
@@ -170,61 +151,7 @@ class MarianCodec:
         return tokenizer.decode(ids, skip_special_tokens=True).strip()
 
 
-NO_REPEAT_NGRAM = 3
-
-
-def _repeat_banned(tokens: list[int], n: int = NO_REPEAT_NGRAM) -> set[int]:
-    """Tokens that would complete an n-gram already present in `tokens`.
-
-    The standard no-repeat-ngram constraint. Cheap to compute at these lengths, and it
-    is the difference between a translation and a stuck record.
-    """
-    if len(tokens) < n:
-        return set()
-    prefix = tuple(tokens[-(n - 1) :])
-    return {
-        tokens[i + n - 1]
-        for i in range(len(tokens) - n + 1)
-        if tuple(tokens[i : i + n - 1]) == prefix
-    }
-
-
-SENTENCE_SPLIT = re.compile(r"(?<=[.!?।])\s+")
-
-
-def split_sentences(text: str) -> list[str]:
-    """Marian is a SENTENCE-level model, not a document-level one.
-
-    Handing it two sentences at once does not raise - it translates one and silently
-    drops the other, or rambles past the end of the first. Splitting first is what turns
-    "come back after two weeks" into the full instruction the patient was actually given.
-    """
-    parts = [p.strip() for p in SENTENCE_SPLIT.split(text) if p.strip()]
-    return parts or [text.strip()]
-
-
-def greedy_translate(
-    cache, codec: MarianCodec, text: str, src: str, tgt: str, priority,
-    model_key: str = "translate",
-):
-    """Translate sentence by sentence, then rejoin."""
-    pieces: list[str] = []
-    device = "cpu"
-    latency = 0.0
-    for sentence in split_sentences(text):
-        result = _translate_one(cache, codec, sentence, tgt, priority, model_key)
-        if result is None:
-            return None
-        translated, device, took = result
-        latency += took
-        if translated:
-            pieces.append(translated)
-    return " ".join(pieces), device, latency
-
-
-def _translate_one(
-    cache, codec: MarianCodec, text: str, tgt: str, priority, model_key: str
-):
+def greedy_translate(cache, codec: MarianCodec, text: str, src: str, tgt: str, priority):
     """Encode once, then decode token by token until end-of-sentence.
 
     Returns (text, device, latency_ms), or None when the assets are not loaded. No KV
@@ -236,7 +163,7 @@ def _translate_one(
         return None
 
     encoded = cache.run(
-        model_key,
+        "translate",
         {"input_ids": source, "attention_mask": np.ones_like(source)},
         filename="translate_encoder.onnx",
         priority=priority,
@@ -254,7 +181,7 @@ def _translate_one(
 
     for _ in range(MAX_NEW_TOKENS):
         decoded = cache.run(
-            model_key,
+            "translate",
             {
                 "input_ids": np.array([tokens], dtype=np.int64),
                 "encoder_attention_mask": encoder_mask,
@@ -266,17 +193,7 @@ def _translate_one(
         if decoded is None:
             return None
         latency += decoded.latency_ms
-        logits = np.asarray(decoded.outputs[0])[0, -1].astype(np.float32)
-
-        # Greedy decoding without a repetition guard collapses into a loop: observed
-        # output was "రెండు రెండు రెండు..." repeated until the token budget ran out,
-        # which is both wrong AND the reason a short sentence took 17 seconds. Blocking
-        # any token that would complete a 3-gram we have already emitted fixes the
-        # quality and the latency in one move.
-        for banned in _repeat_banned(tokens):
-            logits[banned] = -np.inf
-
-        next_token = int(logits.argmax())
+        next_token = int(np.asarray(decoded.outputs[0])[0, -1].argmax())
         if next_token == eos:
             break
         tokens.append(next_token)

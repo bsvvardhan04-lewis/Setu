@@ -10,13 +10,7 @@ import numpy as np
 from ..config import SUPPORTED_LANGUAGES
 from ..runtime import Priority
 from .base import Adapter, Inference
-from .translate_seq2seq import (
-    DEDICATED_MODELS,
-    SUPPORTED_TARGETS,
-    TARGET_CODES,
-    MarianCodec,
-    greedy_translate,
-)
+from .translate_seq2seq import TARGET_CODES, MarianCodec, greedy_translate
 
 #: Unicode block -> language, used by the script-based identifier. Several languages share
 #: a script (Hindi and Marathi are both Devanagari), so this narrows rather than decides;
@@ -99,23 +93,10 @@ class Translator(Adapter):
 
     def __init__(self, cache) -> None:
         super().__init__(cache)
-        # The multilingual checkpoint, plus one bilingual checkpoint per language it
-        # cannot actually handle. Built lazily so an absent dedicated model costs nothing.
-        self._codecs: dict[str, MarianCodec] = {
-            self.key: MarianCodec(cache.model_root / self.key)
-        }
-        for code, directory in DEDICATED_MODELS.items():
-            self._codecs[directory] = MarianCodec(
-                cache.model_root / directory, bilingual=True
-            )
+        self._codec = MarianCodec(cache.model_root / self.key)
 
     def supported(self, code: str) -> bool:
-        return code in SUPPORTED_TARGETS
-
-    def _route(self, tgt: str) -> tuple[str, MarianCodec]:
-        """Which checkpoint handles this target language."""
-        key = DEDICATED_MODELS.get(tgt, self.key)
-        return key, self._codecs[key]
+        return code in TARGET_CODES
 
     def translate(self, text: str, src: str, tgt: str) -> Inference:
         start = time.perf_counter()
@@ -125,18 +106,13 @@ class Translator(Adapter):
             )
 
         # "auto" reaches us from the teach-back path, which knows the text is not English
-        # but not which language it is. Script detection is enough to pick a code.
+        # but not which language it is. Script detection is enough to pick an NLLB code.
         if src == "auto":
             src = detect_script(text)[0]
 
-        # Every checkpoint SETU ships translates FROM English. The source therefore has
-        # to be English, and only the TARGET is looked up in the supported set - asking
-        # whether the source is a supported target is a different question with the same
-        # shape, and answering it disabled translation entirely.
-        if src == "en" and self.supported(tgt):
-            model_key, codec = self._route(tgt)
+        if self.supported(src) and self.supported(tgt):
             result = greedy_translate(
-                self.cache, codec, text, src, tgt, self.priority, model_key=model_key
+                self.cache, self._codec, text, src, tgt, self.priority
             )
             if result is not None:
                 translated, device, latency = result
@@ -146,7 +122,7 @@ class Translator(Adapter):
                         self.key,
                         device,
                         latency,
-                        extra={"src": src, "tgt": tgt, "checkpoint": model_key},
+                        extra={"src": src, "tgt": tgt, "model": "opus-mt-en-mul"},
                     )
 
         return Inference(
