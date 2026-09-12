@@ -27,8 +27,13 @@ snapdragon = [
     "onnxruntime-genai>=0.4",
 ]
 # Portable fallback so reviewers can run everything on any laptop.
+#
+# The floor is 1.22, not 1.17: the INT8 Whisper encoder uses ConvInteger, and CPU
+# providers before ~1.21 raise NOT_IMPLEMENTED for it at session-build time. The
+# adapter then falls back to its stub and reports degraded, so speech recognition
+# silently stops working with no error visible to the user. Do not lower this.
 cpu = [
-    "onnxruntime>=1.17",
+    "onnxruntime>=1.22",
 ]
 audio = [
     "sounddevice>=0.4.6",
@@ -39,6 +44,13 @@ dev = [
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
     "ruff>=0.4",
+]
+# Tooling for regenerating the submission documents. Kept OUT of the runtime extras:
+# markitdown pulls in magika, which pins onnxruntime<=1.20.1 on Windows and silently
+# downgrades the runtime out from under the speech path.
+docs = [
+    "pymupdf>=1.24",
+    "lxml>=5.0",
 ]
 
 [project.scripts]

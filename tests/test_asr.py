@@ -116,3 +116,24 @@ def test_transcript_feeds_the_comprehension_pipeline(engine):
 def test_silence_does_not_produce_confident_speech(engine):
     result = engine.asr.transcribe(np.zeros(SAMPLE_RATE * 4, dtype=np.float32), language="en")
     assert len(result.value) < 120, f"silence should not decode a paragraph: {result.value!r}"
+
+
+@needs_whisper
+def test_runtime_can_actually_build_the_encoder(engine):
+    """A guard against silent regression by dependency.
+
+    The INT8 Whisper encoder uses ConvInteger. CPU providers before ~1.21 raise
+    NOT_IMPLEMENTED for it when the session is built - and because the adapter is
+    designed to degrade rather than crash, the only symptom is that speech recognition
+    quietly stops working and reports `degraded`. That is exactly what happened when a
+    documentation tool pulled in a package pinning onnxruntime<=1.20.1 and downgraded
+    the runtime out from under the app.
+
+    This asserts the session really builds, so the next such downgrade fails loudly here
+    instead of in front of a judge.
+    """
+    session = engine.cache.get("asr", filename="asr_encoder.onnx")
+    assert session is not None, (
+        "the Whisper encoder session failed to build. Check the onnxruntime version - "
+        "ConvInteger needs >=1.22 on the CPU provider."
+    )

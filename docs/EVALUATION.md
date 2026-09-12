@@ -6,7 +6,7 @@ is about speed. This one is about whether the product's central claim is true.
 - Cases: **10** labelled sessions across clinic, classroom and counter
 - Instructions extracted: **26**
 - Scoring method: `hybrid`
-- Generated: 2026-09-09 23:12:54
+- Generated: 2026-09-12 18:40:30
 
 ## The asymmetry
 
@@ -24,29 +24,6 @@ The two errors are not equally bad, so they are reported separately.
 | Recall on missed items | **100.0%** | Of the instructions the learner truly did not restate, how many we caught. **This is the number that matters.** |
 | Precision on missed items | 86.7% | Of what we flagged, how much was genuinely missed. Guards against a check that flags everything and is therefore ignored. |
 | F1 | 92.9% | Balance of the two. |
-
-## What the embeddings actually buy
-
-The first implementation used keyword overlap alone. The second replaced it
-with sentence-embedding cosine. **The evaluation showed the second was worse**
-— cosine scores an instruction against a restatement lower than expected,
-because the two are grammatically asymmetric (an imperative against a
-first-person promise). Measured on this corpus, truly covered items scored
-0.34–0.99 and truly missed items 0.01–0.54: overlapping ranges, so no single
-cosine threshold separates them.
-
-But the two signals fail on *different* items, so the shipped scorer unions
-them: an item counts as covered if either clears its threshold.
-
-| Scoring | Recall | Precision | F1 | False alarms | Dangerous misses |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Lexical only | 100.0% | 81.2% | 89.7% | 3 | 0 |
-| **Hybrid (shipped)** | **100.0%** | **86.7%** | **92.9%** | **2** | **0** |
-
-Thresholds were chosen by sweeping the corpus and taking the operating point
-that keeps dangerous misses at zero, rather than the one that maximises F1.
-At a lower threshold F1 peaks slightly higher — and one genuinely missed
-instruction gets reported as understood. That trade is not available to us.
 
 ## Per case
 
