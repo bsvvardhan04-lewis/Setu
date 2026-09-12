@@ -14,3 +14,8 @@ bench_results/
 
 .claude/
 ui/node_modules/
+
+# npm deps pulled in only to build the submission documents
+node_modules/
+package-lock.json
+package.json
