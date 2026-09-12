@@ -121,10 +121,12 @@ python scripts/aihub_profile.py --all  # real Snapdragon hardware
 
 - Whisper is weaker on Telugu, Kannada and Odia than on Hindi. The stated mitigation is
   IndicWhisper through the same AI Hub export recipe.
-- Speech synthesis will not run the Piper voice without an espeak-ng phonemiser. The
-  weights are present, but Indic Piper voices are `espeak`-typed, and driving one from
-  characters produces fluent noise rather than an error. SETU refuses and delegates to the
-  client's on-device synthesiser — a deliberate choice, and tested as such.
+- Speech synthesis does not run the Piper voice, because Indic Piper voices are
+  `espeak`-typed and no espeak-ng phonemiser is installable here; driving one from
+  characters produces fluent noise rather than an error. Synthesis therefore uses Windows
+  SAPI — real, offline, OS-provided — for languages with an installed voice, and delegates
+  to the client's own voice otherwise. Both the engine and the per-language coverage are
+  reported rather than implied.
 - IndicTrans2 needs an ONNX export step that is documented but not scripted.
 - Document capture works, but through `Windows.Media.Ocr` rather than our own quantised
   graphs: genuinely offline and accurate, CPU-only rather than NPU-accelerated, and limited

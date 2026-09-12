@@ -237,7 +237,7 @@ def speak(request: SpeakRequest) -> dict:
     with wave.open(buffer, "wb") as fh:
         fh.setnchannels(1)
         fh.setsampwidth(2)
-        fh.setframerate(22050)
+        fh.setframerate(int(result.extra.get("sample_rate", 22050)))
         fh.writeframes((np.clip(result.value, -1, 1) * 32767).astype(np.int16).tobytes())
     return {
         "audio": base64.b64encode(buffer.getvalue()).decode("ascii"),

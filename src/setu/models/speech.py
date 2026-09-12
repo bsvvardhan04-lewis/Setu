@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
+import pathlib
+import platform
+import subprocess
 import time
 import wave
 
@@ -10,6 +14,13 @@ import numpy as np
 
 from ..runtime import Priority
 from .base import Adapter, Inference
+
+log = logging.getLogger(__name__)
+
+
+def _ps_quote(value: str) -> str:
+    """Single-quote a PowerShell literal, doubling any internal quotes."""
+    return "'" + value.replace("'", "''") + "'"
 
 SAMPLE_RATE = 16000
 
@@ -78,6 +89,81 @@ class Tts(Adapter):
 
     key = "tts"
     priority = Priority.INTERACTIVE
+    #: language -> SAPI voice name (or None). Enumerating voices costs a subprocess.
+    _sapi_cache: dict[str, str | None] = {}
+
+    # --------------------------------------------------------------- SAPI backend
+    #
+    # Same move as document capture: when our own model cannot be driven, use the engine
+    # the operating system already ships rather than pretending the capability is absent.
+    # SAPI is real, fully offline synthesis - it just is not ours, and it only covers the
+    # languages whose voices are installed, so both facts get reported.
+
+    def _sapi_voice(self, language: str) -> str | None:
+        """Name of an installed SAPI voice for this language, if there is one."""
+        if platform.system() != "Windows":
+            return None
+        if language in self._sapi_cache:
+            return self._sapi_cache[language]
+
+        script = (
+            "Add-Type -AssemblyName System.Speech;"
+            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+            "$s.GetInstalledVoices() | ForEach-Object {"
+            " $_.VoiceInfo.Culture.TwoLetterISOLanguageName + '|' + $_.VoiceInfo.Name };"
+            "$s.Dispose()"
+        )
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True, text=True, timeout=25,
+            )
+        except Exception:
+            self._sapi_cache[language] = None
+            return None
+
+        chosen = None
+        for line in out.stdout.splitlines():
+            if "|" not in line:
+                continue
+            code, _, name = line.strip().partition("|")
+            if code == language:
+                chosen = name
+                break
+        self._sapi_cache[language] = chosen
+        return chosen
+
+    def _sapi_synthesise(self, text: str, voice: str) -> np.ndarray | None:
+        """Render to a 16 kHz mono WAV through SAPI and read it back."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wav = pathlib.Path(tmp) / "speech.wav"
+            script = (
+                "Add-Type -AssemblyName System.Speech;"
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+                f"$s.SelectVoice({_ps_quote(voice)});"
+                "$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo("
+                "16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen,"
+                " [System.Speech.AudioFormat.AudioChannel]::Mono);"
+                f"$s.SetOutputToWaveFile({_ps_quote(str(wav))}, $f);"
+                "$s.Rate = -1;"
+                f"$s.Speak({_ps_quote(text)});"
+                "$s.Dispose()"
+            )
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                    capture_output=True, text=True, timeout=90,
+                )
+                if not wav.is_file() or wav.stat().st_size < 100:
+                    return None
+                with wave.open(str(wav), "rb") as fh:
+                    pcm = np.frombuffer(fh.readframes(fh.getnframes()), dtype=np.int16)
+            except Exception as exc:
+                log.debug("SAPI synthesis failed: %s", exc)
+                return None
+        return (pcm.astype(np.float32) / 32768.0) if len(pcm) else None
 
     def available(self) -> bool:
         """Loaded AND drivable.
@@ -86,7 +172,10 @@ class Tts(Adapter):
         would report a capability we deliberately decline to use, and `doctor` would tell
         a user speech synthesis works when it does not.
         """
-        return super().available() and self._phonemiser() is not None
+        if super().available() and self._phonemiser() is not None:
+            return True
+        # The OS engine counts: it is real, offline synthesis.
+        return self._sapi_voice("en") is not None
 
     def _phonemiser(self):
         """Return a text -> phoneme-id function, or None if this voice cannot be driven."""
@@ -125,11 +214,33 @@ class Tts(Adapter):
 
         phonemise = self._phonemiser()
         if phonemise is None:
+            # Our model cannot be driven. Try the engine the OS already ships before
+            # giving up - it is real offline synthesis, just not ours.
+            voice = self._sapi_voice(language)
+            if voice is not None:
+                audio = self._sapi_synthesise(text, voice)
+                if audio is not None and len(audio):
+                    return Inference(
+                        audio,
+                        self.key,
+                        "cpu",
+                        (time.perf_counter() - start) * 1000.0,
+                        degraded=False,
+                        extra={
+                            "seconds": round(len(audio) / SAMPLE_RATE, 2),
+                            "sample_rate": SAMPLE_RATE,
+                            "path": "windows-sapi",
+                            "engine": f"Windows SAPI ({voice}), offline, OS-provided",
+                            "npu_accelerated": False,
+                            "language": language,
+                        },
+                    )
             return self._fallback(
                 start,
                 language,
-                "this Piper voice needs espeak-ng phonemes and no phonemiser is installed; "
-                "synthesising from characters would produce fluent noise",
+                "this Piper voice needs espeak-ng phonemes and no phonemiser is installed, "
+                "and no installed system voice covers this language; synthesising from "
+                "characters would produce fluent noise",
             )
         phoneme_ids = phonemise(text)
         if phoneme_ids is None:

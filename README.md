@@ -273,11 +273,13 @@ laptop's draw.
 - **Teach-back across languages needs the translation model.** Without it SETU reports
   *"could not verify"* rather than scoring the patient as having understood nothing —
   a false negative here would send a doctor away with the wrong conclusion.
-- **Speech synthesis refuses rather than guesses.** The Piper voice is on disk, but Indic
-  Piper voices are `espeak`-typed: they expect IPA phonemes from espeak-ng, not characters.
-  Driving one from characters does not fail — it speaks confident, fluent-sounding noise.
-  For a tool whose purpose is that a patient understood an instruction, that is worse than
-  silence, so SETU delegates to the client's own on-device voice and says why.
+- **Speech synthesis refuses rather than guesses, per language.** The Piper voice is on
+  disk, but Indic Piper voices are `espeak`-typed: they expect IPA phonemes from espeak-ng,
+  not characters. Driving one from characters does not fail — it speaks confident,
+  fluent-sounding noise. So SETU falls back to Windows SAPI, which is real offline
+  synthesis, and only for languages that actually have a voice installed. Speaking Hindi
+  text with an English voice is not a visible failure, it is confident mispronunciation —
+  so that case delegates to the client's own voice and says why.
 - **Document capture uses the OS engine, not ours.** Our quantised OCR graphs are not
   exported yet, so scanning falls to `Windows.Media.Ocr` — genuinely offline and accurate,
   but CPU-only rather than NPU-accelerated, and limited to the OCR language packs the

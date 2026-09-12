@@ -12,6 +12,7 @@ rather hand the job to the client's own synthesiser than fake it.
 from __future__ import annotations
 
 import json
+import platform
 from pathlib import Path
 
 import numpy as np
@@ -82,11 +83,78 @@ def test_espeak_voice_is_not_driven_from_characters(engine):
     assert result.degraded is True
 
 
-def test_doctor_does_not_claim_a_capability_we_decline_to_use(engine):
-    """`available()` must mean drivable, not merely present on disk.
+def test_doctor_reports_drivability_not_mere_presence(engine):
+    """`available()` must mean "some real engine can speak", not "a file exists".
 
-    Reporting OK for a voice we refuse to run would make the self-check lie to the user
-    about what the machine can do - which is the one thing that check exists to prevent.
+    Reporting OK for a voice we refuse to run would make the self-check lie about what
+    the machine can do. Reporting MISSING while the OS can speak perfectly well would be
+    the same lie in the other direction. So it tracks whether ANY real path exists.
     """
-    if engine.tts._phonemiser() is None:
-        assert engine.tts.available() is False
+    piper_drivable = engine.tts._phonemiser() is not None
+    system_voice = engine.tts._sapi_voice("en") is not None
+    assert engine.tts.available() is (piper_drivable or system_voice)
+
+
+# ------------------------------------------------------- the OS synthesis engine
+#
+# Same move as document capture: when our own model cannot be driven, use the engine the
+# operating system already ships rather than reporting the capability as absent. SAPI is
+# real, fully offline synthesis - it is just not ours, and it covers only the languages
+# whose voices are installed. Both facts are reported rather than glossed over.
+
+
+@pytest.mark.skipif(platform.system() != "Windows", reason="SAPI is a Windows engine")
+def test_english_synthesises_through_the_system_voice(engine):
+    if engine.tts._sapi_voice("en") is None:
+        pytest.skip("no English system voice installed")
+
+    result = engine.tts.synthesize("Take the tablet at night.", "en")
+    assert result.degraded is False, "SAPI is real synthesis, not a degraded path"
+    assert result.extra["path"] == "windows-sapi"
+    assert result.extra["npu_accelerated"] is False
+    assert len(result.value) > 0
+    assert result.extra["seconds"] > 0.3
+
+
+@pytest.mark.skipif(platform.system() != "Windows", reason="SAPI is a Windows engine")
+def test_a_language_with_no_installed_voice_still_refuses(engine):
+    """Coverage is per-language, and the refusal has to be per-language too.
+
+    An English voice being present says nothing about Hindi. Falling back to it would
+    speak Hindi text with an English voice - which is not a translation failure the user
+    can see, it is confident mispronunciation.
+    """
+    missing = next(
+        (code for code in ("hi", "te", "ta", "kn") if engine.tts._sapi_voice(code) is None),
+        None,
+    )
+    if missing is None:
+        pytest.skip("every test language has a system voice installed")
+
+    result = engine.tts.synthesize("रात को गोली लें", missing)
+    assert result.degraded is True
+    assert result.extra["path"] == "client-speech-synthesis"
+    assert len(result.value) == 0
+
+
+def test_powershell_literals_are_escaped():
+    """Care-plan text is interpolated into a PowerShell command line.
+
+    A quote inside a clinical instruction - "doctor's note" - must not be able to end the
+    string literal and let the rest be read as commands. PowerShell escapes a single quote
+    by doubling it, so the invariant is: the result is wrapped in single quotes, and every
+    quote inside is doubled.
+    """
+    from setu.models.speech import _ps_quote
+
+    assert _ps_quote("take it") == "'take it'"
+    assert _ps_quote("doctor's note") == "'doctor''s note'"
+
+    hostile = "x'; Remove-Item C:\ -Recurse; '"
+    quoted = _ps_quote(hostile)
+    assert quoted.startswith("'") and quoted.endswith("'")
+    # Strip the wrapper; every remaining quote must be part of a doubled pair.
+    inner = quoted[1:-1]
+    assert inner.replace("''", "") .count("'") == 0, (
+        f"an unpaired quote survived escaping: {quoted!r}"
+    )
