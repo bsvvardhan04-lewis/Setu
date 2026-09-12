@@ -299,8 +299,17 @@ async function boot() {
     api("/api/domains"),
   ]);
 
+  // Mark languages with no working translation checkpoint. They still get transcribed,
+  // glossed and plan-extracted - they just show the source text untranslated, and the
+  // dropdown should say so rather than letting a demo discover it live.
+  const translatable = new Set(langs.translatable || Object.keys(langs.languages));
   $("lang").innerHTML = Object.entries(langs.languages)
-    .map(([k, v]) => `<option value="${k}"${k === langs.default ? " selected" : ""}>${esc(v)}</option>`)
+    .filter(([k]) => k !== "en")
+    .map(([k, v]) => {
+      const label = translatable.has(k) ? esc(v) : esc(v) + " (no translation)";
+      const sel = k === langs.default ? " selected" : "";
+      return `<option value="${k}"${sel}>${label}</option>`;
+    })
     .join("");
 
   for (const d of doms.domains) state.domains[d.key] = d;

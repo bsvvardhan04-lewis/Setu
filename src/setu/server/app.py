@@ -66,7 +66,19 @@ def system() -> dict:
 
 @app.get("/api/languages")
 def languages() -> dict:
-    return {"languages": SUPPORTED_LANGUAGES, "default": settings.default_language}
+    """Every language, and whether translation is actually available for it.
+
+    All of them are transcribed, language-identified, glossed and plan-extracted. Only
+    some have a translation checkpoint that genuinely works, and the UI says which -
+    offering a language that silently returns English would be worse than not listing it.
+    """
+    from ..models.translate_seq2seq import SUPPORTED_TARGETS
+
+    return {
+        "languages": SUPPORTED_LANGUAGES,
+        "translatable": sorted(SUPPORTED_TARGETS),
+        "default": settings.default_language,
+    }
 
 
 @app.get("/api/documents")

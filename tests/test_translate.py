@@ -17,7 +17,12 @@ import numpy as np
 import pytest
 
 from setu.config import Settings
-from setu.models.translate_seq2seq import TARGET_CODES, MarianCodec
+from setu.models.translate_seq2seq import (
+    DEDICATED_MODELS,
+    SUPPORTED_TARGETS,
+    TARGET_CODES,
+    MarianCodec,
+)
 from setu.pipeline import Engine
 
 REPO = Path(__file__).resolve().parents[1]
@@ -47,11 +52,30 @@ def engine(tmp_path_factory):
     e.close()
 
 
-def test_every_shipped_language_has_an_nllb_code():
+def test_translatable_set_is_a_subset_of_shipped_languages():
     from setu.config import SUPPORTED_LANGUAGES
 
-    missing = set(SUPPORTED_LANGUAGES) - set(TARGET_CODES)
-    assert not missing, f"no NLLB code for {missing}"
+    stray = SUPPORTED_TARGETS - set(SUPPORTED_LANGUAGES)
+    assert not stray, f"translating into languages the app does not ship: {stray}"
+
+
+def test_languages_without_a_working_checkpoint_are_excluded():
+    """Marathi, Bengali and Punjabi are deliberately absent.
+
+    The multilingual checkpoint accepts >>mar<<, >>ben<< and >>pan<< and then returns
+    Devanagari word salad or echoes the source unchanged. That failure passes any "is
+    this the right script?" check, so it has to be excluded by hand rather than detected.
+    Listing them would mean a demo discovers it live.
+    """
+    for code in ("mr", "bn", "pa"):
+        assert code not in SUPPORTED_TARGETS
+
+
+def test_hindi_is_served_by_a_dedicated_checkpoint():
+    # Hindi is the flagship demo language and the multilingual model cannot do it.
+    assert DEDICATED_MODELS["hi"] == "translate_hi"
+    assert "hi" in SUPPORTED_TARGETS
+    assert "hi" not in TARGET_CODES, "must not also route through the multilingual model"
 
 
 def test_target_codes_are_iso_639_3():
@@ -62,15 +86,48 @@ def test_target_codes_are_iso_639_3():
         assert len(code) == 3 and code.islower(), code
 
 
+def test_sentences_are_split_before_translation():
+    """Marian is a sentence-level model; handing it two sentences loses one."""
+    from setu.models.translate_seq2seq import split_sentences
+
+    assert split_sentences("Take the tablet at night. Come back after two weeks.") == [
+        "Take the tablet at night.",
+        "Come back after two weeks.",
+    ]
+    # A Devanagari danda ends a sentence too.
+    assert len(split_sentences("पहला वाक्य। दूसरा वाक्य।")) == 2
+    assert split_sentences("no terminator") == ["no terminator"]
+
+
+def test_repetition_guard_blocks_a_repeated_ngram():
+    """Without this, greedy decoding collapsed into a loop that was both wrong and slow."""
+    from setu.models.translate_seq2seq import _repeat_banned
+
+    assert _repeat_banned([1, 2]) == set()
+    # 5,6 already led to 7, so 7 is banned when 5,6 recurs.
+    assert 7 in _repeat_banned([5, 6, 7, 9, 5, 6])
+    assert _repeat_banned([1, 2, 3, 4, 5]) == set()
+
+
 @needs_tokenizer
-def test_source_is_prefixed_with_the_target_tag_and_ends_in_eos():
+def test_multilingual_source_carries_the_target_tag_id():
     codec = MarianCodec(TRANSLATE_DIR)
+    tamil = codec.encode_source("Take the tablet at night.", "ta")
+    assert tamil is not None
+    assert tamil[0][0] == codec.target_token_id("ta"), "tag must be the first id"
+    assert tamil[0][-1] == codec.eos_id
+
+    telugu = codec.encode_source("Take the tablet at night.", "te")
+    assert telugu[0][0] != tamil[0][0], "different targets must differ in the tag"
+
+
+@needs_tokenizer
+def test_bilingual_checkpoint_takes_no_language_tag():
+    """A dedicated en->hi model has exactly one target, so a tag would be noise."""
+    codec = MarianCodec(TRANSLATE_DIR, bilingual=True)
     ids = codec.encode_source("Take the tablet at night.", "hi")
     assert ids is not None
-    assert ids[0][-1] == codec.eos_id, "Marian expects a trailing EOS"
-    # The >>hin<< prefix must survive tokenisation as leading tokens, not be dropped.
-    plain = codec.encode_source("Take the tablet at night.", "en")
-    assert not np.array_equal(ids, plain), "target tag must change the encoded source"
+    assert ids[0][-1] == codec.eos_id
 
 
 @needs_tokenizer

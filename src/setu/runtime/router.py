@@ -318,6 +318,13 @@ DEFAULT_SPECS: list[ModelSpec] = [
         prior_energy={Device.NPU: 0.18, Device.CPU: 1.0},
     ),
     ModelSpec(
+        name="translate_hi",
+        role="translation",
+        allowed=(Device.NPU, Device.CPU, Device.STUB),
+        prior_latency={Device.NPU: 0.30, Device.CPU: 1.0},
+        prior_energy={Device.NPU: 0.18, Device.CPU: 1.0},
+    ),
+    ModelSpec(
         name="llm",
         role="reasoning",
         allowed=(Device.NPU, Device.CPU, Device.STUB),
