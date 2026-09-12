@@ -301,6 +301,49 @@ def consult_turn(request: ConsultTurnRequest) -> dict:
     return result
 
 
+@app.post("/api/consult/scan")
+async def consult_scan(
+    session_id: str = Form(...),
+    speaker: str = Form("doctor"),
+    image: UploadFile = File(...),
+) -> dict:
+    """Read a prescription or notice and fold it into the session as a turn.
+
+    Same downstream path as speech: the extracted text goes through jargon glossing and
+    care-plan extraction, so a scanned prescription produces exactly the same take-home
+    card a spoken consultation does.
+    """
+    from PIL import Image
+
+    try:
+        session = consult_agent.get(session_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+
+    raw = await image.read()
+    try:
+        page = Image.open(io.BytesIO(raw))
+    except Exception as exc:
+        raise HTTPException(400, f"could not read that image: {exc}")
+
+    read = engine.ocr.read_page(page)
+    text = read.value.text.strip()
+    if not text:
+        return {
+            "text": "",
+            "ocr": read.as_dict(),
+            "detail": "no text found on the page",
+        }
+
+    speaker = speaker if speaker in {session.domain.expert, session.domain.learner} else session.domain.expert
+    result = consult_agent.add_turn(session_id, speaker, text)
+    result["ocr"] = read.as_dict()
+    result["text"] = text
+    result["router"] = engine.router.snapshot()
+    result["power"] = _power_dict()
+    return result
+
+
 @app.get("/api/consult/{session_id}")
 def consult_state(session_id: str) -> dict:
     try:

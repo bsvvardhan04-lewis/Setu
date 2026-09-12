@@ -38,6 +38,7 @@ A laptop sits on the doctor's desk and listens to the whole consultation. With t
 | Stage | What happens |
 | --- | --- |
 | **Listen** | VAD gates the mic; only real speech reaches Whisper. Continuous, all day, on battery. |
+| **Or scan** | Photograph a prescription or notice — the extracted text joins the session exactly as speech does, and produces the same take-home card. |
 | **Bridge** | Each turn is transcribed, language-identified, and shown to the patient in their own language. |
 | **Flag jargon** | "od", "fasting", "lipid profile", "chronic" — caught as spoken, glossed in plain words the doctor can read aloud. |
 | **Build the plan** | Instructions are extracted as they are given: medicines, tests, follow-up, red flags, lifestyle. |
@@ -255,6 +256,10 @@ laptop's draw.
   Driving one from characters does not fail — it speaks confident, fluent-sounding noise.
   For a tool whose purpose is that a patient understood an instruction, that is worse than
   silence, so SETU delegates to the client's own on-device voice and says why.
+- **Document capture uses the OS engine, not ours.** Our quantised OCR graphs are not
+  exported yet, so scanning falls to `Windows.Media.Ocr` — genuinely offline and accurate,
+  but CPU-only rather than NPU-accelerated, and limited to the OCR language packs the
+  machine has installed. It is reported as such rather than claimed as our own.
 - **This is a comprehension aid, not a medical device.** It does not diagnose, does not
   recommend treatment, and never overrides the clinician. Every care-plan item is extracted
   verbatim from what the doctor said.

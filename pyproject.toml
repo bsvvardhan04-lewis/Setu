@@ -26,6 +26,11 @@ snapdragon = [
     "onnxruntime-qnn>=1.19",
     "onnxruntime-genai>=0.4",
 ]
+# Windows-only: exposes Windows.Media.Ocr, the offline OCR engine that ships with the OS.
+# It is what makes document capture work with no model download at all.
+windows = [
+    "winsdk>=1.0.0b10",
+]
 # Portable fallback so reviewers can run everything on any laptop.
 #
 # The floor is 1.22, not 1.17: the INT8 Whisper encoder uses ConvInteger, and CPU

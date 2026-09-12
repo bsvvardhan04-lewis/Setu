@@ -11,6 +11,7 @@ covers Latin + several Indic scripts) -> embedded PDF text layer -> labelled stu
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import platform
 import time
@@ -88,11 +89,41 @@ def _to_gray_array(image) -> np.ndarray:
 
 
 class Ocr(Adapter):
-    """Detector + recogniser pair, presented as one adapter."""
+    """Detector + recogniser pair, presented as one adapter.
+
+    Three tiers, in order: our quantised ONNX graphs (NPU-capable), the OCR engine that
+    ships with Windows (real, offline, CPU), then a labelled stub. The middle tier is why
+    document capture works on any Windows machine with nothing downloaded.
+    """
 
     key = "ocr_detect"
     priority = Priority.INTERACTIVE
     recognizer_key = "ocr_recognize"
+
+    def available(self) -> bool:
+        """True if ANY real recognition path exists - ours or the operating system's.
+
+        Reporting "missing" while the OS can read the page perfectly well would make the
+        self-check understate the machine.
+        """
+        if super().available():
+            return True
+        return self._windows_ocr_available()
+
+    def _windows_ocr_available(self) -> bool:
+        if platform.system() != "Windows":
+            return False
+        try:
+            from winsdk.windows.media.ocr import OcrEngine
+
+            return len(OcrEngine.available_recognizer_languages) > 0
+        except Exception:
+            return False
+
+    def status(self) -> dict:
+        base = super().status()
+        base["windows_ocr"] = self._windows_ocr_available()
+        return base
 
     def __init__(self, cache) -> None:
         super().__init__(cache)
@@ -178,7 +209,6 @@ class Ocr(Adapter):
         if platform.system() != "Windows":
             return None
         try:
-            import asyncio
             import io
 
             from winsdk.windows.globalization import Language
@@ -217,7 +247,7 @@ class Ocr(Adapter):
             return out
 
         try:
-            return asyncio.run(run()) or None
+            return _run_coroutine(run()) or None
         except Exception as exc:
             log.debug("Windows OCR unavailable: %s", exc)
             return None
@@ -252,13 +282,23 @@ class Ocr(Adapter):
             for r in windows_regions:
                 r.page = page
             result = PageResult(regions=windows_regions, width=w, height=h, page=page)
+            # NOT degraded. `degraded` means "we could not do the real thing"; Windows
+            # OCR is a real, fully offline recognition engine that ships with the OS and
+            # produces real text. Flagging it as a stub would understate a working
+            # capability as badly as flagging a stub as real would overstate one. What it
+            # is NOT is NPU-accelerated, so that is what gets reported.
             return Inference(
                 result,
                 self.key,
                 "cpu",
                 (time.perf_counter() - start) * 1000.0,
-                degraded=True,
-                extra={"regions": len(windows_regions), "path": "windows-ocr"},
+                degraded=False,
+                extra={
+                    "regions": len(windows_regions),
+                    "path": "windows-ocr",
+                    "engine": "Windows.Media.Ocr (offline, OS-provided)",
+                    "npu_accelerated": False,
+                },
             )
 
         return Inference(
@@ -269,6 +309,28 @@ class Ocr(Adapter):
             degraded=True,
             extra={"regions": 0, "path": "stub", "hint": "run scripts/fetch_models.py"},
         )
+
+
+def _run_coroutine(coro):
+    """Run a coroutine to completion from anywhere, including inside a live event loop.
+
+    `asyncio.run` raises if a loop is already running in this thread - which is exactly
+    the case inside a FastAPI request handler. The adapter catches that and falls back,
+    so the only symptom was OCR silently returning nothing over HTTP while working
+    perfectly when called in-process. Found by testing through the real endpoint.
+
+    When a loop is already running we hand the coroutine to a fresh loop on its own
+    thread and block for the result.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def _connected_boxes(mask: np.ndarray, min_area: int = 40) -> list[tuple[int, int, int, int]]:

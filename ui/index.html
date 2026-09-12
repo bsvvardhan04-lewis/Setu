@@ -221,6 +221,8 @@
         <input type="text" id="say" placeholder="Type what was said, then press Enter" />
         <button id="btnSay">Add</button>
         <button id="btnMic" title="Hold to speak, release to transcribe">&#127908; Hold to speak</button>
+        <button id="btnScan" title="Read a prescription, notice or form">&#128196; Scan a page</button>
+        <input type="file" id="scanFile" accept="image/*" hidden />
       </div>
     </section>
   </div>
@@ -709,12 +711,51 @@ function encodeWav(samples, rate) {
   return new Blob([view], { type: "audio/wav" });
 }
 
+/* ------------------------------------------------------------------ scanning */
+/* The same downstream path as speech: extracted text becomes a turn, so a scanned
+   prescription produces exactly the take-home card a spoken consultation does. */
+async function scanPage(file) {
+  const btn = $("btnScan");
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "\u{1F4C4} Reading\u2026";
+  try {
+    const form = new FormData();
+    form.append("session_id", state.id);
+    form.append("speaker", state.domain ? state.domain.expert : "doctor");
+    form.append("image", file, file.name || "page.png");
+
+    const result = await api("/api/consult/scan", { method: "POST", body: form });
+    if (!result.text) {
+      alert("No text found on that page. Try a sharper photo or a flatter scan.");
+      return;
+    }
+    if (!state.started) state.started = Date.now();
+    renderTurn(result);
+    Object.assign(state.glosses, result.new_glosses || {});
+    renderGlossary();
+    await refreshPlan();
+    paintCompute(result.router, result.power);
+  } catch (err) {
+    alert("Scan failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
 /* ------------------------------------------------------------------- wiring */
 $("btnDemo").onclick = replayDemo;
 $("btnStop").onclick = () => { state.cancel = true; };
 $("btnTeach").onclick = () => runTeachback().catch((e) => alert(e.message));
 $("btnCard").onclick = () => showCard().catch((e) => alert(e.message));
 $("btnSay").onclick = submitTyped;
+$("btnScan").onclick = () => $("scanFile").click();
+$("scanFile").addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (file) scanPage(file);
+});
 $("btnMic").addEventListener("pointerdown", (e) => {
   e.preventDefault();
   startRecording().catch((err) => alert("Microphone unavailable: " + err.message));

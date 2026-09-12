@@ -472,6 +472,7 @@ function statusSlide() {
     "Live microphone → transcript → care plan",
     "Translation into 8 Indian languages",
     "Sentence embeddings, voice activity detection",
+    "Document scanning — prescription to care plan",
     "Hexa-Router with measured battery draw",
   ];
   s.addText(done.map((t, i) => ({ text: t, options: { bullet: true, breakLine: i < done.length - 1 } })), {
@@ -487,7 +488,7 @@ function statusSlide() {
     "No Snapdragon device — AI Hub profiling harness is built and one command away",
     "Reasoning path still uses the grounded extractive backend, not the 3B LLM",
     "Marathi, Bengali, Punjabi have no working checkpoint — the UI says so",
-    "Document capture (OCR) is stubbed",
+    "Document scanning uses the OS engine, not our own NPU graphs",
   ];
   s.addText(todo.map((t, i) => ({ text: t, options: { bullet: true, breakLine: i < todo.length - 1 } })), {
     x: 6.9, y: 1.8, w: 5.7, h: 2.4,

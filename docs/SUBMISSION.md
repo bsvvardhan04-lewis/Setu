@@ -21,6 +21,8 @@ understood the instruction" is a large and unglamorous share of that.
 
 A laptop on the doctor's desk listens to the consultation with the network disabled, and:
 
+0. **reads the page** — a photographed prescription or notice goes through the same
+   pipeline as speech, producing the same care plan and take-home card
 1. **transcribes and bridges** each turn into the patient's language
 2. **flags jargon** as it is spoken — "od", "fasting", "lipid profile" — with plain glosses
 3. **extracts the care plan** — medicines, tests, follow-up, red flags, lifestyle
@@ -119,5 +121,12 @@ python scripts/aihub_profile.py --all  # real Snapdragon hardware
   characters produces fluent noise rather than an error. SETU refuses and delegates to the
   client's on-device synthesiser — a deliberate choice, and tested as such.
 - IndicTrans2 needs an ONNX export step that is documented but not scripted.
+- Document capture works, but through `Windows.Media.Ocr` rather than our own quantised
+  graphs: genuinely offline and accurate, CPU-only rather than NPU-accelerated, and limited
+  to the OCR language packs installed on the machine. The ONNX detector and recogniser are
+  specified in the registry but not yet exported.
+- Marathi, Bengali and Punjabi have no working translation checkpoint. They are excluded
+  from the translatable set and the interface labels them "(no translation)"; everything
+  else in the pipeline still serves them.
 - SETU is a comprehension aid, **not a medical device**. It does not diagnose, does not
   recommend treatment, and never overrides the clinician.
