@@ -58,11 +58,35 @@ class MarianCodec:
             try:
                 from tokenizers import Tokenizer
 
-                self._tokenizer = Tokenizer.from_file(str(self.model_dir / "tokenizer.json"))
+                self._tokenizer = Tokenizer.from_str(self._tokenizer_json())
             except Exception as exc:
                 log.debug("Marian tokenizer unavailable: %s", exc)
                 self._tokenizer = None
         return self._tokenizer
+
+    def _tokenizer_json(self) -> str:
+        """Load tokenizer.json, repairing a null Precompiled normaliser.
+
+        The published Marian tokenisers carry
+        ``{"type": "Precompiled", "precompiled_charsmap": null}``. The JavaScript
+        tokeniser treats a null charsmap as the identity transform, so exporting it that
+        way is harmless there - but the Rust ``tokenizers`` crate deserialises it
+        strictly and *panics* the interpreter with "invalid type: null, expected a
+        borrowed string". A panic from Rust is not a Python exception, so this cannot be
+        caught around ``Tokenizer.from_file``; it has to be prevented.
+
+        Dropping the no-op normaliser is the repair. Done in memory, so re-downloading
+        the model does not silently reintroduce the crash.
+        """
+        raw = json.loads((self.model_dir / "tokenizer.json").read_text(encoding="utf-8"))
+        normalizer = raw.get("normalizer")
+        if (
+            isinstance(normalizer, dict)
+            and normalizer.get("type") == "Precompiled"
+            and normalizer.get("precompiled_charsmap") is None
+        ):
+            raw["normalizer"] = None
+        return json.dumps(raw)
 
     @property
     def config(self) -> dict:
@@ -94,15 +118,31 @@ class MarianCodec:
     def supports(self, code: str) -> bool:
         return code in TARGET_CODES
 
-    def encode_source(self, text: str, tgt: str) -> np.ndarray | None:
-        """`>>tgt<< source text` then EOS - the form Marian was trained on."""
+    def target_token_id(self, tgt: str) -> int | None:
+        """The vocab id of the `>>xxx<<` language tag."""
         tokenizer = self.tokenizer
         tag = TARGET_CODES.get(tgt)
         if tokenizer is None or tag is None:
             return None
-        ids = tokenizer.encode(f">>{tag}<< {text}", add_special_tokens=False).ids
-        ids = ids[:MAX_SOURCE_TOKENS]
-        return np.array([[*ids, self.eos_id]], dtype=np.int64)
+        found = tokenizer.token_to_id(f">>{tag}<<")
+        return int(found) if found is not None else None
+
+    def encode_source(self, text: str, tgt: str) -> np.ndarray | None:
+        """[>>tgt<<] source tokens [EOS] - the form Marian was trained on.
+
+        The language tag is prepended as an ID, not as text. Encoding the literal
+        string ">>hin<< ..." looks right and is wrong: the Unigram model does not treat
+        the tag as atomic and shreds it into ['▁>', '>', 'hin', '<', '<'], so the model
+        never sees the tag, picks a target language on its own, and returns fluent
+        nonsense in a language nobody asked for - with the mangled tag echoed back in
+        the output. Nothing raises.
+        """
+        tokenizer = self.tokenizer
+        tag_id = self.target_token_id(tgt)
+        if tokenizer is None or tag_id is None:
+            return None
+        ids = tokenizer.encode(text, add_special_tokens=False).ids[:MAX_SOURCE_TOKENS]
+        return np.array([[tag_id, *ids, self.eos_id]], dtype=np.int64)
 
     def decode(self, ids: list[int]) -> str:
         tokenizer = self.tokenizer
