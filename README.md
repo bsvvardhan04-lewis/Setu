@@ -170,15 +170,23 @@ Nine models. Sources, licences, quantisation and export recipes are itemised in
 | Speech recognition | Whisper Small v2 | **Qualcomm AI Hub** | INT8 encoder + decoder |
 | Reasoning | Llama 3.2 3B Instruct | **Qualcomm AI Hub** (Genie) | W4A16 |
 | Voice activity | Silero VAD | open source (MIT) | INT8 |
-| Translation | IndicTrans2 distilled 200M | AI4Bharat (MIT) | INT8 |
+| Translation | OPUS-MT en-mul + en-hi | Helsinki-NLP (Apache-2.0) | INT8 |
 | Embeddings | all-MiniLM-L6-v2 | open source (Apache-2.0) | INT8 |
 | Text detection | PaddleOCR DB | open source (Apache-2.0) | INT8 |
 | Text recognition | PP-OCRv4 rec | open source (Apache-2.0) | INT8 |
 | Language ID | Unicode-script identifier | in-repo | — |
 | Speech synthesis | Piper VITS | open source (MIT) | FP16 |
 
-Twelve languages: Hindi, Telugu, Tamil, Bengali, Marathi, Kannada, Malayalam, Gujarati,
-Punjabi, Odia, Urdu, English.
+**Twelve languages are supported; eight of them translate.** Hindi, Telugu, Tamil,
+Kannada, Malayalam, Gujarati, Odia and Urdu have a working translation checkpoint.
+Marathi, Bengali and Punjabi are transcribed, language-identified, jargon-glossed and
+plan-extracted like the rest, but the available checkpoints return word salad for them, so
+they are excluded from the translatable set and the UI labels them **"(no translation)"**.
+Shipping a language that silently returns English would be worse than not offering it.
+
+Hindi routes to a dedicated `en-hi` checkpoint because the multilingual model cannot do it
+— a failure that emits perfectly well-formed Devanagari and therefore passes any automated
+"is this the right script?" check. It had to be read to be caught.
 
 ## Run it
 

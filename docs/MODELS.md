@@ -81,7 +81,8 @@ now regression-tested in `tests/test_asr.py`:
 | --- | --- | --- | --- | --- |
 | `vad` | Silero VAD | `onnx-community/silero-vad` | MIT | INT8 |
 | `embed` | all-MiniLM-L6-v2 | `sentence-transformers/all-MiniLM-L6-v2` | Apache-2.0 | INT8 |
-| `translate` | IndicTrans2 distilled 200M | `ai4bharat/indictrans2-en-indic-dist-200M` | MIT | INT8 |
+| `translate` | OPUS-MT en-mul | `Xenova/opus-mt-en-mul` | Apache-2.0 | INT8 |
+| `translate_hi` | OPUS-MT en-hi | `Xenova/opus-mt-en-hi` | Apache-2.0 | INT8 |
 | `ocr_detect` | PP-OCRv4 DB detector | PaddlePaddle/PaddleOCR | Apache-2.0 | INT8 |
 | `ocr_recognize` | PP-OCRv4 recogniser | PaddlePaddle/PaddleOCR | Apache-2.0 | INT8 |
 | `tts` | Piper VITS (Indic voices) | `rhasspy/piper-voices` | MIT | FP16 |
@@ -92,6 +93,29 @@ Fetch them with:
 python scripts/fetch_models.py --list
 python scripts/fetch_models.py --all
 ```
+
+### Translation: what works, and what does not
+
+Measured across all eleven target languages on the same two-sentence input:
+
+| Works | Does not |
+| --- | --- |
+| Hindi (dedicated `en-hi`), Telugu, Tamil, Kannada, Malayalam, Gujarati, Odia, Urdu | Marathi, Bengali, Punjabi |
+
+The failures are the instructive part. `opus-mt-en-mul` **accepts** `>>mar<<`, `>>ben<<`
+and `>>pan<<` and returns fluent-looking Devanagari word salad, or echoes the source
+unchanged. Nothing raises, and the output passes a script check — so it is excluded by
+hand, and the UI says "(no translation)" rather than letting a live demo find out.
+
+Quality on the languages that do work is good on structure and weak on medical nouns:
+"tablet" becomes "table" in several of them. That is the same failure profile as Whisper
+on "amlodipine", and the same argument: a bigger model is what fixes it, and the NPU is
+what makes a bigger model affordable in an all-day workload.
+
+**NLLB-200 and IndicTrans2** are the quality upgrade path. NLLB-200-distilled-600M covers
+all twelve properly; it was not shipped here because it is 660 MB and non-commercial
+(CC-BY-NC-4.0). IndicTrans2 (AI4Bharat, MIT) is the right choice for a commercial
+deployment and needs an ONNX export step.
 
 ### Why a separate translator when we already have an LLM
 
