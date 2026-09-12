@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 import wave
 
@@ -61,18 +62,78 @@ class Vad(Adapter):
 
 
 class Tts(Adapter):
-    """Piper VITS synthesis, with Windows SAPI as the offline fallback.
+    """Piper VITS synthesis, with the client's on-device synthesiser as the fallback.
 
     Speech output is not a nice-to-have here: a user who cannot read the form cannot read
     our explanation of the form either.
+
+    **The model is deliberately not used unless it can be driven correctly.** Piper voices
+    declare a ``phoneme_type``, and the Indic voices are ``espeak`` - they expect IPA
+    phonemes from espeak-ng, not characters. Feeding a character-derived id sequence to an
+    espeak voice does not fail; it synthesises confident, fluent-sounding noise. For a tool
+    whose entire purpose is that a patient understood the instruction, plausible gibberish
+    is worse than silence - so with no phonemiser installed this reports `degraded` and the
+    client speaks the text instead. Still on the device, just not through our model.
     """
 
     key = "tts"
     priority = Priority.INTERACTIVE
 
+    def available(self) -> bool:
+        """Loaded AND drivable.
+
+        The default check only asks whether the weights are on disk. For this voice that
+        would report a capability we deliberately decline to use, and `doctor` would tell
+        a user speech synthesis works when it does not.
+        """
+        return super().available() and self._phonemiser() is not None
+
+    def _phonemiser(self):
+        """Return a text -> phoneme-id function, or None if this voice cannot be driven."""
+        try:
+            config = json.loads(
+                (self.cache.model_root / self.key / "tts.onnx.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+        except Exception:
+            return None
+
+        id_map = config.get("phoneme_id_map") or {}
+        if not id_map:
+            return None
+
+        if config.get("phoneme_type") != "espeak":
+            # A character-type voice can be driven straight from its own id map.
+            return lambda text: _ids_from_map(text, id_map)
+
+        try:
+            import piper_phonemize
+        except Exception:
+            return None
+
+        voice = (config.get("espeak") or {}).get("voice", "hi")
+
+        def espeak_ids(text: str):
+            sentences = piper_phonemize.phonemize_espeak(text, voice)
+            return _ids_from_map("".join(p for s in sentences for p in s), id_map)
+
+        return espeak_ids
+
     def synthesize(self, text: str, language: str = "hi") -> Inference:
         start = time.perf_counter()
-        phoneme_ids = _naive_phoneme_ids(text)
+
+        phonemise = self._phonemiser()
+        if phonemise is None:
+            return self._fallback(
+                start,
+                language,
+                "this Piper voice needs espeak-ng phonemes and no phonemiser is installed; "
+                "synthesising from characters would produce fluent noise",
+            )
+        phoneme_ids = phonemise(text)
+        if phoneme_ids is None:
+            return self._fallback(start, language, "could not phonemise the text")
 
         result = self.cache.run(
             self.key,
@@ -93,6 +154,9 @@ class Tts(Adapter):
                 extra={"seconds": round(len(audio) / 22050, 2), "path": "piper"},
             )
 
+        return self._fallback(start, language, "synthesis graph unavailable")
+
+    def _fallback(self, start: float, language: str, reason: str) -> Inference:
         return Inference(
             np.zeros(0, dtype=np.float32),
             self.key,
@@ -101,23 +165,33 @@ class Tts(Adapter):
             degraded=True,
             extra={
                 "path": "client-speech-synthesis",
-                "note": "UI falls back to the browser SpeechSynthesis API, still on-device",
+                "note": "the client speaks the text with its own on-device synthesiser",
+                "reason": reason,
                 "language": language,
             },
         )
 
 
-def _naive_phoneme_ids(text: str, max_len: int = 512) -> np.ndarray:
-    """Placeholder grapheme->id map so the graph shape is right.
+def _ids_from_map(symbols: str, id_map: dict, max_len: int = 512) -> np.ndarray | None:
+    """Map symbols through the voice's own phoneme_id_map.
 
-    A real deployment swaps this for espeak-ng phonemisation using the id map in
-    tts.onnx.json. Kept explicit rather than hidden so nobody mistakes it for finished.
+    Piper interleaves a padding id between every symbol, which the model was trained with;
+    omitting it degrades prosody badly. Unknown symbols are dropped rather than guessed -
+    a wrong id is a wrong sound, and there is no benign wrong sound in a care instruction.
     """
-    ids = [1]
-    for ch in text[: max_len - 2]:
-        ids.append((ord(ch) % 120) + 10)
-    ids.append(2)
-    return np.array(ids, dtype=np.int64)
+    pad = (id_map.get("_") or [0])[0]
+    bos = (id_map.get("^") or [1])[0]
+    eos = (id_map.get("$") or [2])[0]
+
+    ids: list[int] = [bos, pad]
+    for symbol in symbols[:max_len]:
+        mapped = id_map.get(symbol)
+        if not mapped:
+            continue
+        ids.extend(mapped)
+        ids.append(pad)
+    ids.append(eos)
+    return np.array(ids, dtype=np.int64) if len(ids) > 4 else None
 
 
 def write_wav(path, audio: np.ndarray, sample_rate: int = 22050) -> None:

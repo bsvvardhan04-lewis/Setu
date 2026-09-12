@@ -190,10 +190,15 @@ Hindi routes to a dedicated `en-hi` checkpoint because the multilingual model ca
 
 ## Run it
 
+**Double-click `START_SETU.bat`.** It creates the environment on first run, prints what
+your machine can actually do, and opens the app. Nothing to install but Python.
+
+Or by hand:
+
 ```bash
 git clone <this-repo> && cd setu
-python -m venv .venv && .venv\Scripts\activate
-pip install -e .
+python -m venv .venv && .venv\Scriptsctivate
+pip install -e . "onnxruntime>=1.22"
 python -m setu.server.app
 ```
 
@@ -245,6 +250,11 @@ laptop's draw.
 - **Teach-back across languages needs the translation model.** Without it SETU reports
   *"could not verify"* rather than scoring the patient as having understood nothing —
   a false negative here would send a doctor away with the wrong conclusion.
+- **Speech synthesis refuses rather than guesses.** The Piper voice is on disk, but Indic
+  Piper voices are `espeak`-typed: they expect IPA phonemes from espeak-ng, not characters.
+  Driving one from characters does not fail — it speaks confident, fluent-sounding noise.
+  For a tool whose purpose is that a patient understood an instruction, that is worse than
+  silence, so SETU delegates to the client's own on-device voice and says why.
 - **This is a comprehension aid, not a medical device.** It does not diagnose, does not
   recommend treatment, and never overrides the clinician. Every care-plan item is extracted
   verbatim from what the doctor said.

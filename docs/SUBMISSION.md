@@ -114,8 +114,10 @@ python scripts/aihub_profile.py --all  # real Snapdragon hardware
 
 - Whisper is weaker on Telugu, Kannada and Odia than on Hindi. The stated mitigation is
   IndicWhisper through the same AI Hub export recipe.
-- The Piper phoneme mapping is a placeholder; production needs espeak-ng phonemisation
-  against the voice's id map. This is marked in the source rather than hidden.
+- Speech synthesis will not run the Piper voice without an espeak-ng phonemiser. The
+  weights are present, but Indic Piper voices are `espeak`-typed, and driving one from
+  characters produces fluent noise rather than an error. SETU refuses and delegates to the
+  client's on-device synthesiser — a deliberate choice, and tested as such.
 - IndicTrans2 needs an ONNX export step that is documented but not scripted.
 - SETU is a comprehension aid, **not a medical device**. It does not diagnose, does not
   recommend treatment, and never overrides the clinician.
