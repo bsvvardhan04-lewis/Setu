@@ -12,7 +12,7 @@ import logging
 from ..config import Settings, settings as default_settings
 from ..models import Asr, Embedder, LanguageId, Llm, Ocr, Translator, Tts, Vad, catalogue_dicts
 from ..runtime import SessionCache, build_default_router, describe_host, read_power_state
-from ..store import VectorStore
+from ..store import SessionStore, VectorStore
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +25,10 @@ class Engine:
         self.router = build_default_router()
         self.cache = SessionCache(self.router, self.settings.model_root)
         self.store = VectorStore(self.settings.db_path)
+        self.sessions = SessionStore(self.settings.sessions_db)
+        pruned = self.sessions.prune(self.settings.retention_days)
+        if pruned:
+            log.info("pruned %d consultation(s) past the retention window", pruned)
 
         self.vad = Vad(self.cache)
         self.asr = Asr(self.cache)
@@ -66,11 +70,17 @@ class Engine:
             "adapters": {name: a.status() for name, a in self._adapters.items()},
             "catalogue": catalogue_dicts(),
             "store": self.store.stats(),
+            "consultations": {
+                **self.sessions.stats(),
+                "retention_days": self.settings.retention_days,
+                "path": str(self.settings.sessions_db),
+            },
             "offline_only": self.settings.offline_only,
         }
 
     def close(self) -> None:
         self.store.close()
+        self.sessions.close()
 
 
 _engine: Engine | None = None

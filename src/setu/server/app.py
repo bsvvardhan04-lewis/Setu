@@ -28,7 +28,7 @@ engine = get_engine()
 doc_agent = DocAgent(engine)
 form_agent = FormAgent(engine)
 voice_agent = VoiceAgent(engine)
-consult_agent = ConsultAgent(engine)
+consult_agent = ConsultAgent(engine, store=engine.sessions)
 
 
 class AskRequest(BaseModel):
@@ -286,6 +286,25 @@ def domains() -> dict:
             for key, d in DOMAINS.items()
         ],
     }
+
+
+@app.get("/api/consult")
+def consult_list(limit: int = 25) -> dict:
+    """Past consultations, most recent first. Survives a restart."""
+    return {
+        "consultations": consult_agent.recent(limit),
+        "retention_days": settings.retention_days,
+    }
+
+
+@app.delete("/api/consult/{session_id}")
+def consult_delete(session_id: str) -> dict:
+    """Remove a consultation from memory and disk.
+
+    Medical conversations should be easy to delete, so this is a first-class operation
+    rather than something that needs a database tool.
+    """
+    return {"deleted": consult_agent.forget(session_id), "session_id": session_id}
 
 
 @app.post("/api/consult/start")

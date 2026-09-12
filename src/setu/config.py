@@ -50,6 +50,9 @@ class Settings:
     model_root: Path = field(default_factory=lambda: _env_path("MODEL_ROOT", REPO_ROOT / "models"))
     data_dir: Path = field(default_factory=lambda: _env_path("DATA_DIR", REPO_ROOT / ".setu_data"))
     db_path: Path = field(default_factory=lambda: _env_path("DB", REPO_ROOT / ".setu_data" / "setu.db"))
+    sessions_db: Path = field(
+        default_factory=lambda: _env_path("SESSIONS_DB", REPO_ROOT / ".setu_data" / "consultations.db")
+    )
 
     # server
     host: str = field(default_factory=lambda: _env("HOST", "127.0.0.1"))
@@ -61,6 +64,12 @@ class Settings:
     offline_only: bool = field(default_factory=lambda: _env_bool("OFFLINE_ONLY", True))
     #: Force a device for A/B benchmarking, e.g. SETU_FORCE_DEVICE=cpu
     force_device: str | None = field(default_factory=lambda: os.environ.get("SETU_FORCE_DEVICE"))
+
+    #: How long a consultation is kept before `prune` drops it. Bounded by default,
+    #: because a clinic that never thinks about retention should not silently accumulate
+    #: years of patient conversations on a laptop. Set SETU_RETENTION_DAYS=0 to keep
+    #: everything, which is a decision someone has to make deliberately.
+    retention_days: int = field(default_factory=lambda: int(_env("RETENTION_DAYS", "90")))
 
     # retrieval
     chunk_chars: int = 900

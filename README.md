@@ -127,6 +127,28 @@ first-person promise are grammatically asymmetric. The two signals failed on dif
 items, so the shipped scorer unions them — **86.7%, better than either alone.** Full
 working: [`docs/EVALUATION.md`](docs/EVALUATION.md).
 
+## What is kept, and where
+
+Consultations are written to a sqlite file under your own data directory after every turn,
+so a restart does not lose a visit and a take-home card URL handed to a patient keeps
+working.
+
+That deserves stating precisely, because it changes the privacy claim. *Nothing leaves the
+device* stays true — there is no outbound call in any path. But **"does not leave" is not
+"is not kept"**, and a consultation is protected health information sitting on a laptop.
+So:
+
+- everything is in **one file** you can delete with the file manager, no tooling required
+- **deleting a visit cascades** — turns, plan items and glosses go with it, no orphans
+- **retention is bounded by default**: 90 days, then automatic deletion. A clinic that
+  never thinks about retention does not silently accumulate years of patient conversations.
+  `SETU_RETENTION_DAYS=0` keeps everything, which is a decision someone has to make on
+  purpose.
+- **Past visits** in the header lists what is stored and deletes any of it in one click
+
+`GET /api/system` reports the file path, the retention window and how many consultations
+are held, so what is kept is inspectable rather than implied.
+
 ## Why this needs Snapdragon
 
 Three reasons, and only the third is a performance argument.

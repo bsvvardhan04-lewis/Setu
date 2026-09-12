@@ -182,6 +182,26 @@
   .note {
     font-size: 12px; color: var(--muted); padding: 0 14px 12px; flex: none;
   }
+  /* ------------------------------------------------------------ past visits */
+  .scrim {
+    position: fixed; inset: 0; background: rgba(13,20,32,.45);
+  }
+  #pastWrap { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; }
+  .sheet {
+    position: relative; width: min(680px, 92vw); max-height: 78vh;
+    box-shadow: 0 12px 40px rgba(13,20,32,.28);
+  }
+  .visit {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 12px; border-radius: 8px; background: var(--bg); margin-bottom: 7px;
+  }
+  .visit .meta { flex: 1; min-width: 0; }
+  .visit .when { font-size: 13.5px; font-weight: 600; }
+  .visit .facts { font-size: 12px; color: var(--muted); }
+  .visit button { padding: 6px 11px; font-size: 12px; }
+  .visit button.del { border-color: var(--danger-soft); color: var(--danger); }
+  .note { font-size: 12px; color: var(--muted); align-self: center; }
+
   @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -191,6 +211,7 @@
   <div class="brand"><b>SETU</b> <span>offline comprehension engine</span></div>
   <select id="domain" title="Which setting this session is in"></select>
   <span class="pill offline" id="netPill">on-device · no network</span>
+  <button id="btnPast" title="Visits saved on this machine">Past visits</button>
   <div class="spacer"></div>
   <div class="metrics">
     <div>battery draw<b id="mDraw">—</b></div>
@@ -255,6 +276,20 @@
     </section>
   </div>
 </main>
+
+<!-- ---------------------------------------------------------- past visits --- -->
+<div id="pastWrap" hidden>
+  <div class="scrim" id="pastScrim"></div>
+  <section class="card sheet" id="pastSheet">
+    <h2>Visits saved on this machine <span class="count" id="pastCount">0</span></h2>
+    <div class="body" id="pastList"></div>
+    <div class="controls">
+      <span class="note" id="pastNote"></span>
+      <span style="flex:1"></span>
+      <button id="pastClose">Close</button>
+    </div>
+  </section>
+</div>
 
 <!-- ------------------------------------------------------------- compute --- -->
 <div class="compute">
@@ -740,12 +775,77 @@ async function scanPage(file) {
   }
 }
 
+/* ---------------------------------------------------------------- past visits */
+/* Consultations are written to disk after every turn, so they survive a restart and a
+   take-home card URL handed to a patient keeps working. That also means protected health
+   information is now at rest on this machine, so deletion is a first-class control here
+   rather than something buried in a settings page. */
+async function showPast() {
+  const box = $("pastList");
+  $("pastWrap").hidden = false;
+  box.innerHTML = `<p class="empty">Loading…</p>`;
+  try {
+    const data = await api("/api/consult?limit=40");
+    const rows = data.consultations || [];
+    $("pastCount").textContent = rows.length;
+    $("pastNote").textContent = data.retention_days
+      ? `Kept for ${data.retention_days} days, then deleted automatically.`
+      : "Kept until you delete them.";
+
+    if (!rows.length) {
+      box.innerHTML = `<p class="empty">No saved visits yet.</p>`;
+      return;
+    }
+    box.innerHTML = rows.map(renderVisit).join("");
+  } catch (err) {
+    box.innerHTML = `<p class="empty">Could not load saved visits: ${esc(err.message)}</p>`;
+  }
+}
+
+function renderVisit(row) {
+  const when = new Date((row.updated_at || 0) * 1000);
+  const stamp = isNaN(when) ? "" : when.toLocaleString();
+  const domain = (state.domains[row.domain_key] || {}).title || row.domain_key;
+  return `<div class="visit" data-id="${esc(row.session_id)}">
+      <div class="meta">
+        <div class="when">${esc(stamp)}</div>
+        <div class="facts">${esc(domain)} &middot; ${row.turns} turns &middot;
+          ${row.plan_items} instructions</div>
+      </div>
+      <button data-act="card">Card</button>
+      <button data-act="del" class="del">Delete</button>
+    </div>`;
+}
+
+$("pastList").addEventListener("click", async (e) => {
+  const button = e.target.closest("button");
+  if (!button) return;
+  const row = button.closest(".visit");
+  const id = row.dataset.id;
+
+  if (button.dataset.act === "card") {
+    window.open(`/card/${encodeURIComponent(id)}`, "_blank");
+    return;
+  }
+  if (!confirm("Delete this visit permanently? This cannot be undone.")) return;
+  try {
+    await api(`/api/consult/${encodeURIComponent(id)}`, { method: "DELETE" });
+    row.remove();
+    $("pastCount").textContent = document.querySelectorAll("#pastList .visit").length;
+  } catch (err) {
+    alert("Could not delete: " + err.message);
+  }
+});
+
 /* ------------------------------------------------------------------- wiring */
 $("btnDemo").onclick = replayDemo;
 $("btnStop").onclick = () => { state.cancel = true; };
 $("btnTeach").onclick = () => runTeachback().catch((e) => alert(e.message));
 $("btnCard").onclick = () => showCard().catch((e) => alert(e.message));
 $("btnSay").onclick = submitTyped;
+$("btnPast").onclick = () => showPast();
+$("pastClose").onclick = () => ($("pastWrap").hidden = true);
+$("pastScrim").onclick = () => ($("pastWrap").hidden = true);
 $("btnScan").onclick = () => $("scanFile").click();
 $("scanFile").addEventListener("change", (e) => {
   const file = e.target.files && e.target.files[0];

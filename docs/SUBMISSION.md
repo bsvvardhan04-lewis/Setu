@@ -91,6 +91,11 @@ principle behind it is distrust of the model:
 ## 5. Deployment and accessibility
 
 - **Fully offline.** Loopback-bound server, no CDN in the UI, no outbound call in any path.
+- **Durable, and honest about it.** Consultations persist to a local sqlite file so a
+  restart does not lose a visit. Because that means protected health information is at
+  rest on the machine, retention is bounded to 90 days by default, deletion is a
+  first-class control in the interface, and `/api/system` reports exactly what is held
+  and where.
 - **Runs on any machine.** Every model has a labelled fallback; the entire product is
   exercisable on a reviewer's laptop with zero weights downloaded. Anything on a fallback
   path is marked `degraded` in the API and on screen — a stub is never passed off as real.

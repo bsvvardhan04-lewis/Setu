@@ -19,6 +19,8 @@ language, that reflects what was really said rather than what the clinician mean
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -27,6 +29,8 @@ from ..config import SUPPORTED_LANGUAGES
 from ..models import GenParams
 from .domains import CLINIC, DEFAULT_DOMAIN, DOMAINS, Domain, get_domain
 from .engine import Engine
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -182,11 +186,77 @@ class ConsultSession:
 
 
 class ConsultAgent:
-    """Owns live consultation sessions. One instance per process."""
+    """Owns consultations. One instance per process.
 
-    def __init__(self, engine: Engine) -> None:
+    Sessions are held in memory for speed and written to disk after every change, so a
+    restart does not lose a visit and a take-home card URL handed to a patient keeps
+    working. The store is optional: without one the agent behaves exactly as it did
+    before, which keeps tests and throwaway runs from leaving files behind.
+    """
+
+    def __init__(self, engine: Engine, store=None) -> None:
         self.engine = engine
+        self.store = store
         self.sessions: dict[str, ConsultSession] = {}
+
+    # ---------------------------------------------------------------- persistence
+
+    def _persist(self, session: ConsultSession) -> None:
+        """Write after every change rather than at some 'end' of the visit.
+
+        There is no reliable end: a consultation stops when the patient walks out, the
+        laptop lid closes, or the battery dies. Saving continuously is the only version
+        that survives all three.
+        """
+        if self.store is None:
+            return
+        try:
+            self.store.save(session)
+        except Exception:  # pragma: no cover - storage must never break a live visit
+            log.exception("could not persist consultation %s", session.session_id)
+
+    def _restore(self, session_id: str) -> ConsultSession | None:
+        if self.store is None:
+            return None
+
+        def build(head, turns, plan, glosses) -> ConsultSession:
+            session = ConsultSession(
+                session_id=head["session_id"],
+                patient_language=head["patient_language"],
+                doctor_language=head.get("doctor_language") or "en",
+                domain_key=head["domain_key"],
+                started_at=head["started_at"],
+            )
+            session.turns = [
+                Turn(
+                    speaker=t["speaker"],
+                    text=t["text"],
+                    language=t["language"] or "en",
+                    at=t["at"] or time.time(),
+                    jargon=json.loads(t["jargon"] or "[]"),
+                )
+                for t in turns
+            ]
+            session.plan = [
+                CarePlanItem(
+                    kind=p["kind"],
+                    text=p["text"],
+                    source_turn=p["source_turn"],
+                    confirmed=bool(p["confirmed"]),
+                    similarity=p["similarity"],
+                    lexical=p["lexical"],
+                    semantic=p["semantic"],
+                )
+                for p in plan
+            ]
+            session.glosses = dict(glosses)
+            return session
+
+        try:
+            return self.store.load(session_id, build)
+        except Exception:
+            log.exception("could not restore consultation %s", session_id)
+            return None
 
     def start(
         self,
@@ -200,13 +270,30 @@ class ConsultAgent:
             domain_key=get_domain(domain).key,
         )
         self.sessions[session_id] = session
+        self._persist(session)
         return session
 
     def get(self, session_id: str) -> ConsultSession:
         session = self.sessions.get(session_id)
         if session is None:
+            session = self._restore(session_id)
+            if session is not None:
+                self.sessions[session_id] = session
+        if session is None:
             raise KeyError(f"no consultation session {session_id!r}")
         return session
+
+    def forget(self, session_id: str) -> bool:
+        """Delete a consultation from memory and from disk.
+
+        Medical conversations should be easy to remove, so this is a first-class
+        operation rather than something a user has to go find a database file for.
+        """
+        self.sessions.pop(session_id, None)
+        return bool(self.store.delete(session_id)) if self.store else True
+
+    def recent(self, limit: int = 25) -> list[dict]:
+        return self.store.recent(limit) if self.store else []
 
     # ------------------------------------------------------------------ live turn
 
@@ -242,6 +329,7 @@ class ConsultAgent:
             )
 
         session.turns.append(turn)
+        self._persist(session)
         return {
             "turn": turn.as_dict(),
             "translation": translation,
@@ -295,6 +383,7 @@ class ConsultAgent:
             existing.add(text.lower())
             added += 1
 
+        self._persist(session)
         return {
             "plan": [p.as_dict() for p in session.plan],
             "added": added,
@@ -401,6 +490,7 @@ class ConsultAgent:
         if not verifiable:
             for item in session.plan:
                 item.confirmed = False
+            self._persist(session)
             return {
                 "plan": [p.as_dict() for p in session.plan],
                 "covered": 0,
@@ -435,6 +525,7 @@ class ConsultAgent:
                     item.confirmed = False
 
         missed = [p for p in session.plan if not p.confirmed]
+        self._persist(session)
         return {
             "plan": [p.as_dict() for p in session.plan],
             "covered": len(session.plan) - len(missed),
