@@ -6,15 +6,12 @@ import threading
 import time
 import unicodedata
 
-import numpy as np
-
 from ..config import SUPPORTED_LANGUAGES
 from ..runtime import Priority
 from .base import Adapter, Inference
 from .translate_seq2seq import (
     DEDICATED_MODELS,
     SUPPORTED_TARGETS,
-    TARGET_CODES,
     MarianCodec,
     greedy_translate,
 )
@@ -110,7 +107,7 @@ class Translator(Adapter):
         self._codecs: dict[str, MarianCodec] = {
             self.key: MarianCodec(cache.model_root / self.key)
         }
-        for code, directory in DEDICATED_MODELS.items():
+        for directory in DEDICATED_MODELS.values():
             self._codecs[directory] = MarianCodec(
                 cache.model_root / directory, bilingual=True
             )

@@ -374,9 +374,13 @@ function applyDomain() {
   $("cardTitle").textContent = `Words the ${d.learner} likely missed`;
   $("planTitle").textContent = d.key === "clinic" ? "Care plan" : "What you must do";
   $("say").placeholder = `Type what the ${d.expert} said, then press Enter`;
+  renderPlan();
+  renderGlossary();
 }
 
 const title = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const expert = () => (state.domain ? state.domain.expert : "doctor");
+const learner = () => (state.domain ? state.domain.learner : "patient");
 const initials = (speaker) => speaker.slice(0, 2).replace(/^./, (c) => c.toUpperCase());
 
 async function startVisit() {
@@ -499,7 +503,7 @@ function renderPlan() {
   const box = $("plan");
   $("cPlan").textContent = state.plan.length;
   if (!state.plan.length) {
-    box.innerHTML = `<p class="empty">Instructions the doctor gives will collect here.</p>`;
+    box.innerHTML = `<p class="empty">Instructions the ${esc(expert())} gives will collect here.</p>`;
     return;
   }
   box.innerHTML = kindOrder().map((kind) => {
@@ -526,7 +530,7 @@ function renderGlossary() {
     ? entries
         .map(([t, g]) => `<div class="gloss"><b>${esc(t)}</b> — <span>${esc(g)}</span></div>`)
         .join("")
-    : `<p class="empty">Medical jargon is flagged as it is spoken.</p>`;
+    : `<p class="empty">Jargon is flagged as the ${esc(expert())} speaks.</p>`;
 }
 
 /* ---------------------------------------------------------------- teachback */
@@ -537,7 +541,7 @@ async function runTeachback() {
     return;
   }
   const said = prompt(
-    "Ask the patient to repeat the plan in their own words:\n\n" +
+    `Ask the ${learner()} to repeat it back in their own words:\n\n` +
       questions.questions.map((q) => "• " + q).join("\n"),
     state.suggested || ""
   );
@@ -554,10 +558,10 @@ async function runTeachback() {
   } else if (result.needs_repeat.length) {
     verdict =
       `<div class="verdict bad"><b>${result.covered} of ${result.total} understood</b>` +
-      `The patient did not repeat back these, and they are the ones that matter:</div>` +
+      `The ${esc(learner())} did not repeat back these, and they are the ones that matter:</div>` +
       result.needs_repeat.map((t) => `<div class="item missed"><span class="tick">✗</span><span>${esc(t)}</span></div>`).join("");
   } else {
-    verdict = `<div class="verdict good"><b>${result.covered} of ${result.total} understood</b>The patient repeated the plan back correctly.</div>`;
+    verdict = `<div class="verdict good"><b>${result.covered} of ${result.total} understood</b>The ${esc(learner())} repeated it back correctly.</div>`;
   }
   $("teachback").innerHTML = verdict;
 

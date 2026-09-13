@@ -142,6 +142,32 @@ def test_recent_lists_newest_first(agent):
     assert set(listed) == {"a", "b", "c"}
 
 
+def test_visits_opened_but_never_used_are_not_listed(agent):
+    """The UI opens a visit on every page load; those must not bury the real ones."""
+    agent.start("empty", domain="clinic")
+    agent.start("used", domain="clinic")
+    agent.add_turn("used", "doctor", LINES[0])
+    assert [row["session_id"] for row in agent.recent()] == ["used"]
+
+
+def test_stale_empty_visits_are_cleaned_up(agent, engine):
+    agent.start("abandoned", domain="clinic")
+    agent.start("just-opened", domain="counter")
+    agent.start("real", domain="clinic")
+    agent.add_turn("real", "doctor", LINES[0])
+
+    with engine.sessions._lock:
+        engine.sessions._conn.execute(
+            "UPDATE consultations SET updated_at = ? WHERE session_id IN ('abandoned', 'real')",
+            (time.time() - 2 * 3600,),
+        )
+        engine.sessions._conn.commit()
+
+    assert engine.sessions.prune_empty() == 1
+    kept = engine.sessions.stats()["consultations"]
+    assert kept == 2, "a fresh empty visit and an old visit with content must both survive"
+
+
 # ------------------------------------------------------------------- optional
 
 

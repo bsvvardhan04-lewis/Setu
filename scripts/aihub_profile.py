@@ -28,7 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -294,7 +294,7 @@ def to_markdown(payload: dict) -> str:
         "",
         f"- Generated: {payload['generated']}",
         f"- Device: `{payload['device']}`",
-        f"- Target runtime: QNN context binary (Hexagon NPU)",
+        "- Target runtime: QNN context binary (Hexagon NPU)",
         "",
         "`NPU layers` is the important column. A model that compiles but scatters half its",
         "layers back onto the CPU is not really running on the NPU, and the whole premise",

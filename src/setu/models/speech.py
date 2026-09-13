@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import pathlib
@@ -89,8 +90,7 @@ class Tts(Adapter):
 
     key = "tts"
     priority = Priority.INTERACTIVE
-    #: language -> SAPI voice name (or None). Enumerating voices costs a subprocess.
-    _sapi_cache: dict[str, str | None] = {}
+
 
     # --------------------------------------------------------------- SAPI backend
     #
@@ -100,38 +100,8 @@ class Tts(Adapter):
     # languages whose voices are installed, so both facts get reported.
 
     def _sapi_voice(self, language: str) -> str | None:
-        """Name of an installed SAPI voice for this language, if there is one."""
-        if platform.system() != "Windows":
-            return None
-        if language in self._sapi_cache:
-            return self._sapi_cache[language]
-
-        script = (
-            "Add-Type -AssemblyName System.Speech;"
-            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
-            "$s.GetInstalledVoices() | ForEach-Object {"
-            " $_.VoiceInfo.Culture.TwoLetterISOLanguageName + '|' + $_.VoiceInfo.Name };"
-            "$s.Dispose()"
-        )
-        try:
-            out = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                capture_output=True, text=True, timeout=25,
-            )
-        except Exception:
-            self._sapi_cache[language] = None
-            return None
-
-        chosen = None
-        for line in out.stdout.splitlines():
-            if "|" not in line:
-                continue
-            code, _, name = line.strip().partition("|")
-            if code == language:
-                chosen = name
-                break
-        self._sapi_cache[language] = chosen
-        return chosen
+        """Name of an installed system voice for this language, if there is one."""
+        return installed_system_voices().get(language)
 
     def _sapi_synthesise(self, text: str, voice: str) -> np.ndarray | None:
         """Render to a 16 kHz mono WAV through SAPI and read it back."""
@@ -281,6 +251,47 @@ class Tts(Adapter):
                 "language": language,
             },
         )
+
+
+@functools.lru_cache(maxsize=1)
+def installed_system_voices() -> dict[str, str]:
+    """language code -> first installed SAPI voice name. Enumerated once per process.
+
+    This cache lived on the class, then on each instance, and both were wrong:
+
+    * a mutable CLASS attribute is shared state that any caller can mutate - one test
+      stubbing it poisons the next
+    * a per-INSTANCE dict re-spawns PowerShell every time an Engine is built, which took
+      the test suite from 89 seconds to over seven minutes
+
+    Installed voices are a fact about the machine that does not change while the process
+    runs, so the right shape is a process-wide, immutable-in-practice result. `lru_cache`
+    gives exactly that, and `installed_system_voices.cache_clear()` is the explicit,
+    greppable way for a test to reset it.
+    """
+    if platform.system() != "Windows":
+        return {}
+    script = (
+        "Add-Type -AssemblyName System.Speech;"
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+        "$s.GetInstalledVoices() | ForEach-Object {"
+        " $_.VoiceInfo.Culture.TwoLetterISOLanguageName + '|' + $_.VoiceInfo.Name };"
+        "$s.Dispose()"
+    )
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, timeout=25,
+        )
+    except Exception:
+        return {}
+
+    voices: dict[str, str] = {}
+    for line in out.stdout.splitlines():
+        code, sep, name = line.strip().partition("|")
+        if sep and code and name and code not in voices:
+            voices[code] = name
+    return voices
 
 
 def _ids_from_map(symbols: str, id_map: dict, max_len: int = 512) -> np.ndarray | None:

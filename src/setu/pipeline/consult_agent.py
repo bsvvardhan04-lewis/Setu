@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 from ..config import SUPPORTED_LANGUAGES
 from ..models import GenParams
-from .domains import CLINIC, DEFAULT_DOMAIN, DOMAINS, Domain, get_domain
+from .domains import CLINIC, DEFAULT_DOMAIN, Domain, get_domain
 from .engine import Engine
 
 log = logging.getLogger(__name__)
@@ -138,12 +138,12 @@ def extract_plan_rules(
     """
     patterns = (domain or get_domain(None)).patterns
     items: list[CarePlanItem] = []
-    for sentence in re.split(r"(?<=[.!?।])\s+|\n", text):
-        sentence = sentence.strip()
+    for raw in re.split(r"(?<=[.!?।])\s+|\n", text):
+        sentence = raw.strip()
         if len(sentence) < 6:
             continue
         for pattern, kind in patterns:
-            if re.search(pattern, sentence, flags=re.I):
+            if re.search(pattern, sentence, flags=re.IGNORECASE):
                 items.append(CarePlanItem(kind=kind, text=sentence, source_turn=turn_index))
                 break
     return items
@@ -372,7 +372,7 @@ class ConsultAgent:
         added = 0
         for line in (generated.value or "").splitlines():
             match = re.match(
-                r"\s*(MEDICATION|TEST|FOLLOWUP|REDFLAG|LIFESTYLE)\s*:\s*(.+)", line, re.I
+                r"\s*(MEDICATION|TEST|FOLLOWUP|REDFLAG|LIFESTYLE)\s*:\s*(.+)", line, re.IGNORECASE
             )
             if not match:
                 continue
@@ -597,7 +597,12 @@ class TakeHomeCard:
                     "translated_ok": not translated.degraded,
                     "confirmed": item.confirmed,
                 }
-                for item, translated in zip(items, self._translate_all(items, target))
+                # strict=True: a length mismatch here would silently drop an
+                # instruction from the patient's printed card, which is precisely the
+                # kind of failure this project exists to prevent.
+                for item, translated in zip(
+                    items, self._translate_all(items, target), strict=True
+                )
             ]
             sections.append({"kind": kind, "heading": domain.heading(kind), "items": lines})
 
@@ -634,12 +639,10 @@ class TakeHomeCard:
             lines.append("")
         if card["glossary"]:
             lines.append(f"WORDS THE {self.agent.get(session_id).domain.expert.upper()} USED")
-            for entry in card["glossary"]:
-                lines.append(f"  - {entry['term']}: {entry['plain']}")
+            lines.extend(f"  - {entry['term']}: {entry['plain']}" for entry in card["glossary"])
             lines.append("")
         if card["unconfirmed"]:
             expert = self.agent.get(session_id).domain.expert.upper()
             lines.append(f"PLEASE ASK THE {expert} TO REPEAT")
-            for text in card["unconfirmed"]:
-                lines.append(f"  - {text}")
+            lines.extend(f"  - {text}" for text in card["unconfirmed"])
         return "\n".join(lines)

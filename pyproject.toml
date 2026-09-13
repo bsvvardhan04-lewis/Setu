@@ -68,5 +68,53 @@ where = ["src"]
 line-length = 100
 target-version = "py310"
 
+[tool.ruff.lint]
+extend-select = [
+    "B",     # bugbear
+    "C4",    # comprehensions
+    "I",     # import order
+    "PERF",  # obvious performance traps
+    "PL",    # pylint subset
+    "RUF",
+    "SIM",
+    "UP",    # pyupgrade
+]
+ignore = [
+    # SETU's whole fallback design rests on broad excepts: every adapter must degrade to a
+    # labelled stub rather than take the app down, and a failure to load one model must
+    # never stop a consultation. These are deliberate and each one logs.
+    "BLE001",
+    # FastAPI's dependency idiom is a call in a default argument - File(...), Form(...).
+    "B008",
+    # Several subprocess calls intentionally inspect returncode themselves or tolerate
+    # failure (probing for an optional system voice, reading a battery counter).
+    "PLW1510",
+    # Markdown tables are built from adjacent string literals on purpose; these are not
+    # missing commas, and parenthesising every row hurts more than it helps.
+    "ISC004",
+    # Two-digit-year pivoting wants the LOCAL date, which is what date.today() gives.
+    "DTZ011",
+    # Probe loops that skip an unreadable sensor and carry on - the point is to not care.
+    "S110", "S112",
+    # Heavy and optional imports are deferred into functions on purpose: the package must
+    # import fast, and onnxruntime, PIL, tokenizers and winsdk all have to stay optional so
+    # the app runs on a machine that has none of them.
+    "PLC0415",
+    # Module-level singletons (the engine, the power sampler) are intentional: one
+    # process holds one router and one learned cost model, which is the whole point.
+    "PLW0603",
+    # Devanagari punctuation and en-dashes are meant literally in prose and in the
+    # sentence-splitting regex; they are not typos for ASCII.
+    "RUF001",
+    "PLR0911", "PLR0917",             # return/positional-arg counts
+    "PLR0912", "PLR0913", "PLR0915",  # branch/arg/statement counts
+    "PLR2004",                        # magic values: thresholds are named where it matters
+    "PYI034",                         # __enter__ -> Self needs py3.11; the floor is 3.10
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers on purpose to pin down internal invariants.
+"tests/*" = ["SLF001", "PLR2004"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

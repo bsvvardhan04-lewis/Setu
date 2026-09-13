@@ -69,7 +69,7 @@ def card_page(session_id: str) -> FileResponse:
     try:
         consult_agent.get(session_id)
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
     return FileResponse(UI_DIR / "card.html")
 
 
@@ -138,7 +138,7 @@ def _pdf_pages(raw: bytes) -> list:
             400,
             "PDF rendering needs pypdfium2 (pip install pypdfium2). "
             f"Upload page images instead. ({exc})",
-        )
+        ) from exc
 
 
 @app.post("/api/ask")
@@ -204,7 +204,7 @@ def form_start(request: FormStartRequest) -> dict:
     try:
         state = form_agent.start(request.session_id, request.template)
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
     first = state.next_empty()
     return {"form": state.as_dict(), "next_prompt": first.label if first else None}
 
@@ -214,7 +214,7 @@ def form_fill(request: FormFillRequest) -> dict:
     try:
         return form_agent.fill(request.session_id, request.utterance, request.field_key)
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.post("/api/speak")
@@ -270,8 +270,8 @@ class TeachbackRequest(BaseModel):
 @app.get("/api/domains")
 def domains() -> dict:
     """The settings SETU can run. Same engine, different vocabulary each time."""
-    from ..pipeline.domains import DEFAULT_DOMAIN, DOMAINS
     from ..pipeline.demo_script import SCRIPTS
+    from ..pipeline.domains import DEFAULT_DOMAIN, DOMAINS
 
     scripts_by_domain: dict[str, list[dict]] = {}
     for name, script in SCRIPTS.items():
@@ -320,14 +320,14 @@ def consult_turn(request: ConsultTurnRequest) -> dict:
     try:
         session = consult_agent.get(request.session_id)
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
     allowed = {"doctor", "patient", session.domain.expert, session.domain.learner}
     if request.speaker not in allowed:
         raise HTTPException(400, f"speaker must be one of {sorted(allowed)}")
     try:
         result = consult_agent.add_turn(request.session_id, request.speaker, request.text)
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
     # The live placement panel is the point of the whole project, so every turn
     # reports where the work actually ran.
     result["router"] = engine.router.snapshot()
@@ -352,13 +352,13 @@ async def consult_scan(
     try:
         session = consult_agent.get(session_id)
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
 
     raw = await image.read()
     try:
         page = Image.open(io.BytesIO(raw))
     except Exception as exc:
-        raise HTTPException(400, f"could not read that image: {exc}")
+        raise HTTPException(400, f"could not read that image: {exc}") from exc
 
     read = engine.ocr.read_page(page)
     text = read.value.text.strip()
@@ -383,7 +383,7 @@ def consult_state(session_id: str) -> dict:
     try:
         return consult_agent.get(session_id).as_dict()
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.post("/api/consult/{session_id}/refine")
@@ -391,7 +391,7 @@ def consult_refine(session_id: str) -> dict:
     try:
         return consult_agent.refine_plan(session_id)
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.get("/api/consult/{session_id}/teachback")
@@ -399,7 +399,7 @@ def consult_teachback_questions(session_id: str) -> dict:
     try:
         return {"questions": consult_agent.teachback_questions(session_id)}
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.post("/api/consult/teachback")
@@ -407,7 +407,7 @@ def consult_teachback(request: TeachbackRequest) -> dict:
     try:
         return consult_agent.check_teachback(request.session_id, request.restatement)
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.get("/api/consult/{session_id}/card")
@@ -417,7 +417,7 @@ def consult_card(session_id: str) -> dict:
         card["printable"] = TakeHomeCard(consult_agent).to_text(session_id)
         return card
     except KeyError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.get("/api/consult/demo/{name}")

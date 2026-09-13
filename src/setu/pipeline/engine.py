@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import logging
 
-from ..config import Settings, settings as default_settings
+from ..config import Settings
+from ..config import settings as default_settings
 from ..models import Asr, Embedder, LanguageId, Llm, Ocr, Translator, Tts, Vad, catalogue_dicts
 from ..runtime import SessionCache, build_default_router, describe_host, read_power_state
 from ..store import SessionStore, VectorStore
@@ -29,6 +30,7 @@ class Engine:
         pruned = self.sessions.prune(self.settings.retention_days)
         if pruned:
             log.info("pruned %d consultation(s) past the retention window", pruned)
+        self.sessions.prune_empty()
 
         self.vad = Vad(self.cache)
         self.asr = Asr(self.cache)

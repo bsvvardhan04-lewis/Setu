@@ -12,7 +12,6 @@ over HTTP. Only testing through the real endpoint surfaced it.
 
 from __future__ import annotations
 
-import io
 import platform
 from pathlib import Path
 

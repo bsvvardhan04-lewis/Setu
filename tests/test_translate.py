@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from setu.config import Settings
@@ -76,6 +75,38 @@ def test_hindi_is_served_by_a_dedicated_checkpoint():
     assert DEDICATED_MODELS["hi"] == "translate_hi"
     assert "hi" in SUPPORTED_TARGETS
     assert "hi" not in TARGET_CODES, "must not also route through the multilingual model"
+
+
+def test_every_translation_checkpoint_can_be_fetched_and_is_catalogued():
+    """A checkpoint the code routes to must be downloadable from a fresh clone.
+
+    `translate_hi` once existed only on the machine it was developed on: the router and
+    the translator both used it, but `fetch_models.py` had no recipe for it, so anyone
+    else got an English passthrough for Hindi - the flagship language - with no error.
+    """
+    import importlib.util
+
+    from setu.models.registry import CATALOGUE
+
+    script = REPO / "scripts" / "fetch_models.py"
+    spec = importlib.util.spec_from_file_location("fetch_models", script)
+    fetch = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fetch)
+
+    for directory in ("translate", *DEDICATED_MODELS.values()):
+        recipe = fetch.HF_RECIPES.get(directory)
+        assert recipe, f"no fetch recipe for models/{directory}"
+        assert {"translate_encoder.onnx", "translate_decoder.onnx", "tokenizer.json"} <= set(
+            recipe["files"].values()
+        )
+        assert directory in CATALOGUE, f"models/{directory} missing from the catalogue"
+
+    # The catalogue is what /api/system shows a judge; it must not claim bn/mr/pa.
+    catalogued = set(CATALOGUE["translate"].languages)
+    for lang, directory in DEDICATED_MODELS.items():
+        assert lang in CATALOGUE[directory].languages
+        catalogued.add(lang)
+    assert catalogued - {"en"} == set(SUPPORTED_TARGETS)
 
 
 def test_target_codes_are_iso_639_3():

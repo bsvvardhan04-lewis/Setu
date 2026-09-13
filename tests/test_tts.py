@@ -15,7 +15,6 @@ import json
 import platform
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from setu.config import Settings
@@ -150,7 +149,7 @@ def test_powershell_literals_are_escaped():
     assert _ps_quote("take it") == "'take it'"
     assert _ps_quote("doctor's note") == "'doctor''s note'"
 
-    hostile = "x'; Remove-Item C:\ -Recurse; '"
+    hostile = r"x'; Remove-Item C:\ -Recurse; '"
     quoted = _ps_quote(hostile)
     assert quoted.startswith("'") and quoted.endswith("'")
     # Strip the wrapper; every remaining quote must be part of a doubled pair.

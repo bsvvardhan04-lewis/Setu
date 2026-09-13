@@ -14,9 +14,9 @@ import json
 import platform
 import statistics
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 
@@ -40,7 +40,7 @@ class BenchRow:
         if not self.latencies_ms:
             return None
         ordered = sorted(self.latencies_ms)
-        index = min(len(ordered) - 1, int(round(p * (len(ordered) - 1))))
+        index = min(len(ordered) - 1, round(p * (len(ordered) - 1)))
         return ordered[index]
 
     def as_dict(self) -> dict[str, object]:
@@ -222,23 +222,7 @@ def to_markdown(results: dict) -> str:
         "| Model | Device | p50 ms | p90 ms | system mWh | marginal mWh | Degraded | Error |",
         "| --- | --- | ---: | ---: | ---: | ---: | :-: | --- |",
     ]
-    for row in results["rows"]:
-        lines.append(
-            "| {model} | {device} | {p50} | {p90} | {energy} | {marginal} | {deg} | {err} |".format(
-                model=row["model"],
-                device=row["device"],
-                p50=row["p50_ms"] if row["p50_ms"] is not None else "-",
-                p90=row["p90_ms"] if row["p90_ms"] is not None else "-",
-                energy=row["energy_mwh_per_inference"]
-                if row["energy_mwh_per_inference"] is not None
-                else "-",
-                marginal=row.get("marginal_mwh_per_inference")
-                if row.get("marginal_mwh_per_inference") is not None
-                else "-",
-                deg="yes" if row["degraded"] else "",
-                err=(row["error"] or "")[:60],
-            )
-        )
+    lines.extend(_row_line(row) for row in results["rows"])
 
     speedups = _speedup_table(results["rows"])
     if speedups:
@@ -251,6 +235,23 @@ def to_markdown(results: dict) -> str:
         ]
         lines += speedups
     return "\n".join(lines) + "\n"
+
+
+def _dash(value) -> object:
+    return "-" if value is None else value
+
+
+def _row_line(row: dict) -> str:
+    return "| {} | {} | {} | {} | {} | {} | {} | {} |".format(
+        row["model"],
+        row["device"],
+        _dash(row["p50_ms"]),
+        _dash(row["p90_ms"]),
+        _dash(row["energy_mwh_per_inference"]),
+        _dash(row.get("marginal_mwh_per_inference")),
+        "yes" if row["degraded"] else "",
+        (row["error"] or "")[:60],
+    )
 
 
 def _speedup_table(rows: list[dict]) -> list[str]:

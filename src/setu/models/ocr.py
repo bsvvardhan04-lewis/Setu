@@ -158,7 +158,7 @@ class Ocr(Adapter):
         if self._charset is None:
             path = self.cache.model_root / self.recognizer_key / "charset.txt"
             try:
-                self._charset = ["<blank>"] + path.read_text(encoding="utf-8").splitlines()
+                self._charset = ["<blank>", *path.read_text(encoding="utf-8").splitlines()]
             except Exception:
                 self._charset = ["<blank>"]
         return self._charset
@@ -394,8 +394,8 @@ def _ctc_decode(logits: np.ndarray, charset: list[str]) -> tuple[str, float]:
     chars: list[str] = []
     kept: list[float] = []
     previous = -1
-    for idx, prob in zip(ids.tolist(), probs.tolist()):
-        if idx != previous and idx != 0 and idx < len(charset):
+    for idx, prob in zip(ids.tolist(), probs.tolist(), strict=True):
+        if idx not in (previous, 0) and idx < len(charset):
             chars.append(charset[idx])
             kept.append(float(prob))
         previous = idx

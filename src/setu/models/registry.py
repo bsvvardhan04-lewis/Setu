@@ -132,11 +132,24 @@ CATALOGUE: dict[str, ModelCard] = {
         precision="int8",
         runtime="onnx",
         files=("translate_encoder.onnx", "translate_decoder.onnx", "tokenizer.json"),
-        notes="One 111 MB model covering every shipped target language. A distilled "
-        "specialist is far cheaper per turn than asking the 3B chat model and more "
-        "faithful on clinical register. NLLB-200 and IndicTrans2 are the quality upgrade "
-        "path and are documented in docs/MODELS.md.",
-        languages=tuple("en hi te ta bn mr kn ml gu pa or ur".split()),
+        notes="The multilingual checkpoint behind every target except Hindi. It nominally "
+        "accepts Marathi, Bengali and Punjabi too, but produces word salad for them, so "
+        "those are not offered. A distilled specialist is far cheaper per turn than the "
+        "3B chat model; NLLB-200 and IndicTrans2 are the upgrade path (docs/MODELS.md).",
+        languages=("en", "ta", "te", "kn", "ml", "gu", "or", "ur"),
+    ),
+    "translate_hi": ModelCard(
+        key="translate_hi",
+        display="OPUS-MT en-hi",
+        source="open-source",
+        upstream="Xenova/opus-mt-en-hi (Helsinki-NLP)",
+        licence="Apache-2.0",
+        precision="int8",
+        runtime="onnx",
+        files=("translate_encoder.onnx", "translate_decoder.onnx", "tokenizer.json"),
+        notes="Dedicated bilingual checkpoint for Hindi, the flagship demo language, "
+        "because the multilingual model's Hindi output is not usable.",
+        languages=("en", "hi"),
     ),
     "llm": ModelCard(
         key="llm",

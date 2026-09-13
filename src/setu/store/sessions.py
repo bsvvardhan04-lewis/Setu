@@ -124,51 +124,50 @@ class SessionStore:
         ]
         glosses = [(session.session_id, term, plain) for term, plain in session.glosses.items()]
 
-        with self._lock:
-            with self._conn:  # one transaction; all of it lands or none of it does
+        with self._lock, self._conn:  # one transaction; all of it lands or none of it does
+            self._conn.execute(
+                "INSERT INTO consultations"
+                " (session_id, domain_key, patient_language, doctor_language,"
+                "  started_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(session_id) DO UPDATE SET"
+                "  domain_key=excluded.domain_key,"
+                "  patient_language=excluded.patient_language,"
+                "  updated_at=excluded.updated_at",
+                (
+                    session.session_id,
+                    session.domain_key,
+                    session.patient_language,
+                    session.doctor_language,
+                    session.started_at,
+                    now,
+                ),
+            )
+            for table in ("consult_turns", "consult_plan", "consult_glosses"):
                 self._conn.execute(
-                    "INSERT INTO consultations"
-                    " (session_id, domain_key, patient_language, doctor_language,"
-                    "  started_at, updated_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?)"
-                    " ON CONFLICT(session_id) DO UPDATE SET"
-                    "  domain_key=excluded.domain_key,"
-                    "  patient_language=excluded.patient_language,"
-                    "  updated_at=excluded.updated_at",
-                    (
-                        session.session_id,
-                        session.domain_key,
-                        session.patient_language,
-                        session.doctor_language,
-                        session.started_at,
-                        now,
-                    ),
+                    f"DELETE FROM {table} WHERE session_id = ?", (session.session_id,)
                 )
-                for table in ("consult_turns", "consult_plan", "consult_glosses"):
-                    self._conn.execute(
-                        f"DELETE FROM {table} WHERE session_id = ?", (session.session_id,)
-                    )
-                if turns:
-                    self._conn.executemany(
-                        "INSERT INTO consult_turns"
-                        " (session_id, ordinal, speaker, text, language, at, jargon)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        turns,
-                    )
-                if plan:
-                    self._conn.executemany(
-                        "INSERT INTO consult_plan"
-                        " (session_id, ordinal, kind, text, source_turn, confirmed,"
-                        "  similarity, lexical, semantic)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        plan,
-                    )
-                if glosses:
-                    self._conn.executemany(
-                        "INSERT INTO consult_glosses (session_id, term, plain)"
-                        " VALUES (?, ?, ?)",
-                        glosses,
-                    )
+            if turns:
+                self._conn.executemany(
+                    "INSERT INTO consult_turns"
+                    " (session_id, ordinal, speaker, text, language, at, jargon)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    turns,
+                )
+            if plan:
+                self._conn.executemany(
+                    "INSERT INTO consult_plan"
+                    " (session_id, ordinal, kind, text, source_turn, confirmed,"
+                    "  similarity, lexical, semantic)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    plan,
+                )
+            if glosses:
+                self._conn.executemany(
+                    "INSERT INTO consult_glosses (session_id, term, plain)"
+                    " VALUES (?, ?, ?)",
+                    glosses,
+                )
 
     # ------------------------------------------------------------------- reading
 
@@ -201,6 +200,11 @@ class SessionStore:
                                {r["term"]: r["plain"] for r in glosses})
 
     def recent(self, limit: int = 25) -> list[dict]:
+        """Newest consultations that actually contain something.
+
+        The UI opens a visit on every page load and every change of setting, so a list
+        that included empty ones would be mostly rows reading "0 turns".
+        """
         with self._lock:
             rows = self._conn.execute(
                 "SELECT c.session_id, c.domain_key, c.patient_language, c.started_at,"
@@ -209,7 +213,9 @@ class SessionStore:
                 "         WHERE t.session_id = c.session_id) AS turns,"
                 "       (SELECT COUNT(*) FROM consult_plan p"
                 "         WHERE p.session_id = c.session_id) AS plan_items"
-                " FROM consultations c ORDER BY c.updated_at DESC LIMIT ?",
+                " FROM consultations c"
+                " WHERE EXISTS (SELECT 1 FROM consult_turns t WHERE t.session_id = c.session_id)"
+                " ORDER BY c.updated_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -218,15 +224,14 @@ class SessionStore:
 
     def delete(self, session_id: str) -> bool:
         """Remove a consultation and everything belonging to it."""
-        with self._lock:
-            with self._conn:
-                for table in ("consult_turns", "consult_plan", "consult_glosses"):
-                    self._conn.execute(
-                        f"DELETE FROM {table} WHERE session_id = ?", (session_id,)
-                    )
-                cur = self._conn.execute(
-                    "DELETE FROM consultations WHERE session_id = ?", (session_id,)
+        with self._lock, self._conn:
+            for table in ("consult_turns", "consult_plan", "consult_glosses"):
+                self._conn.execute(
+                    f"DELETE FROM {table} WHERE session_id = ?", (session_id,)
                 )
+            cur = self._conn.execute(
+                "DELETE FROM consultations WHERE session_id = ?", (session_id,)
+            )
         return cur.rowcount > 0
 
     def prune(self, older_than_days: int) -> int:
@@ -243,6 +248,28 @@ class SessionStore:
                 r["session_id"]
                 for r in self._conn.execute(
                     "SELECT session_id FROM consultations WHERE updated_at < ?", (cutoff,)
+                ).fetchall()
+            ]
+        for session_id in stale:
+            self.delete(session_id)
+        return len(stale)
+
+    def prune_empty(self, older_than_seconds: float = 3600.0) -> int:
+        """Drop visits that were opened and never used.
+
+        Separate from `prune` because it is housekeeping, not retention: it runs even when
+        retention is unbounded. Anything touched recently is left alone, since that may be
+        a visit someone is about to start speaking in.
+        """
+        cutoff = time.time() - older_than_seconds
+        with self._lock:
+            stale = [
+                r["session_id"]
+                for r in self._conn.execute(
+                    "SELECT session_id FROM consultations c WHERE updated_at < ?"
+                    " AND NOT EXISTS"
+                    " (SELECT 1 FROM consult_turns t WHERE t.session_id = c.session_id)",
+                    (cutoff,),
                 ).fetchall()
             ]
         for session_id in stale:

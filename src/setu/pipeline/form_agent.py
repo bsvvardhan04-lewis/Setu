@@ -246,7 +246,7 @@ class FormAgent:
         devices: dict[str, str] = {}
         timings: dict[str, float] = {}
 
-        if cleaned is None and error is None or (error and target.kind != "text"):
+        if (cleaned is None and error is None) or (error and target.kind != "text"):
             generated = self.engine.llm.generate(
                 _EXTRACT.format(label=target.label, kind=target.kind, utterance=utterance),
                 GenParams(max_tokens=48, temperature=0.0),

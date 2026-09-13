@@ -6,12 +6,12 @@ from .harness import BenchRow, run_benchmarks, save, to_markdown
 
 __all__ = [
     "CORPUS",
-    "EvalCase",
-    "run_evaluation",
-    "save_eval",
-    "eval_markdown",
     "BenchRow",
+    "EvalCase",
+    "eval_markdown",
     "run_benchmarks",
+    "run_evaluation",
     "save",
+    "save_eval",
     "to_markdown",
 ]

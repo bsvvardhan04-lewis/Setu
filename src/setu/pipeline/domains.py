@@ -20,7 +20,7 @@ another agent. That is the whole argument for the abstraction.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

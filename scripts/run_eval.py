@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     from setu.bench.corpus import CORPUS
-    from setu.bench.evaluate import run_evaluation, save, to_markdown
+    from setu.bench.evaluate import run_evaluation, save
 
     report = run_evaluation(CORPUS)
     _print(report)

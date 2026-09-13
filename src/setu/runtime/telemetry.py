@@ -261,7 +261,7 @@ class EnergyProbe:
         self.reading = EnergyReading(seconds=0.0)
         self._t0 = 0.0
 
-    def __enter__(self) -> "EnergyProbe":
+    def __enter__(self) -> EnergyProbe:
         first = _sampler.force()
         if first is not None:
             self.reading.samples_mw.append(first)

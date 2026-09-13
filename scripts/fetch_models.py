@@ -4,8 +4,8 @@ Two sources, two mechanisms:
 
 * **Qualcomm AI Hub** (Whisper, Llama) - exported through `qai_hub_models`, which
   compiles the model for a chosen Snapdragon target and downloads the artefact.
-* **Open source** (Silero VAD, MiniLM, PaddleOCR, IndicTrans2, Piper) - downloaded
-  from their upstream repos and quantised locally.
+* **Open source** (Silero VAD, Whisper base, MiniLM, OPUS-MT, Piper) - downloaded
+  pre-quantised from their upstream repos.
 
 Everything lands under `models/<key>/` with the filenames `src/setu/models/registry.py`
 declares, so the app finds them with no further configuration.
@@ -93,9 +93,21 @@ HF_RECIPES: dict[str, dict] = {
             "generation_config.json": "generation_config.json",
         },
         "licence": "Apache-2.0 (Helsinki-NLP OPUS-MT)",
-        "note": "One 111 MB model covering every shipped target language. NLLB-200 and "
+        "note": "Multilingual checkpoint for ta/te/kn/ml/gu/or/ur. NLLB-200 and "
         "IndicTrans2 are higher quality and documented in docs/MODELS.md as the upgrade "
         "path; this one is small enough that the translation path is genuinely running.",
+    },
+    "translate_hi": {
+        "repo": "Xenova/opus-mt-en-hi",
+        "files": {
+            "onnx/encoder_model_quantized.onnx": "translate_encoder.onnx",
+            "onnx/decoder_model_quantized.onnx": "translate_decoder.onnx",
+            "tokenizer.json": "tokenizer.json",
+            "config.json": "config.json",
+        },
+        "licence": "Apache-2.0 (Helsinki-NLP OPUS-MT)",
+        "note": "Dedicated English-Hindi checkpoint. The multilingual model's Hindi is "
+        "unusable, and Hindi is the flagship demo language.",
     },
     "tts": {
         "repo": "rhasspy/piper-voices",
@@ -161,7 +173,9 @@ def fetch_hf(key: str, recipe: dict, force: bool) -> bool:
         except Exception as exc:
             _fail(f"{key}/{local}: {type(exc).__name__}: {str(exc)[:120]}")
             continue
-        shutil.copyfile(src, dest)
+        partial = dest.with_name(dest.name + ".part")
+        shutil.copyfile(src, partial)
+        partial.replace(dest)
         _ok(f"{key}/{local}  <- {recipe['repo']}/{remote}")
         got_any = True
     return got_any

@@ -186,7 +186,11 @@ function render(card) {
 
   parts.push(
     `<footer>Prepared by SETU on this computer. Nothing from this visit was sent over a
-     network. This card records what was said — it is not medical advice on its own.</footer>`
+     network. This card records what was said — ${
+       card.domain === "clinic"
+         ? "it is not medical advice on its own"
+         : `check anything important with the ${esc(card.expert || "person who explained it")}`
+     }.</footer>`
   );
 
   document.getElementById("sheet").innerHTML = parts.join("");

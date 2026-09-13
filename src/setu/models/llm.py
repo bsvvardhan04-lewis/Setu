@@ -17,7 +17,6 @@ Selecting a backend is a runtime decision, so the rest of SETU only ever sees ``
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -26,7 +25,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Protocol
+from typing import Protocol
 
 from ..runtime import Priority
 from .base import Adapter, Inference
@@ -95,7 +94,7 @@ class GenieBackend:
 
 def _strip_genie_framing(raw: str) -> str:
     """genie-t2t-run echoes the prompt and wraps output in [BEGIN]/[END] markers."""
-    match = re.search(r"\[BEGIN\]:?(.*?)\[END\]", raw, flags=re.S)
+    match = re.search(r"\[BEGIN\]:?(.*?)\[END\]", raw, flags=re.DOTALL)
     text = match.group(1) if match else raw
     return text.strip()
 
@@ -236,7 +235,7 @@ class TemplateBackend:
 
 
 def _between(text: str, start: str, end: str) -> str:
-    match = re.search(re.escape(start) + r"(.*?)" + re.escape(end), text, flags=re.S)
+    match = re.search(re.escape(start) + r"(.*?)" + re.escape(end), text, flags=re.DOTALL)
     return match.group(1) if match else ""
 
 

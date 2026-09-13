@@ -12,8 +12,7 @@ from PIL import Image
 
 from setu.config import Settings
 from setu.models import detect_script
-from setu.models.llm import TemplateBackend
-from setu.models.llm import GenParams
+from setu.models.llm import GenParams, TemplateBackend
 from setu.pipeline import DocAgent, Engine, FormAgent, VoiceAgent
 
 
@@ -136,4 +135,8 @@ def test_system_report_is_complete(engine):
     report = engine.system_report()
     for key in ("host", "power", "router", "sessions", "adapters", "catalogue", "store"):
         assert key in report
-    assert len(report["catalogue"]) == 9
+    # Every model the router can place must be described to whoever reads the report,
+    # and nothing may be described that the router cannot place.
+    from setu.runtime.router import DEFAULT_SPECS
+
+    assert {c["key"] for c in report["catalogue"]} == {s.name for s in DEFAULT_SPECS}
